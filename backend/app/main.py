@@ -21,6 +21,7 @@ if _backend_dir not in sys.path:
 from fastapi import FastAPI, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
 
 from app.config import settings
 from app.models.schemas import APIErrorResponse
@@ -103,13 +104,22 @@ app.include_router(analysis_router, prefix=settings.api_prefix)
 app.include_router(decisions_router, prefix=settings.api_prefix)
 
 
+# Path helpers for frontend
+_workspace_root = os.path.dirname(_backend_dir)
+_frontend_dist = os.path.join(_workspace_root, "frontend", "dist")
+_frontend_assets = os.path.join(_frontend_dist, "assets")
+
+# Mount React static assets if built
+if os.path.exists(_frontend_assets):
+    app.mount("/assets", StaticFiles(directory=_frontend_assets), name="assets")
+
+
 @app.get("/", tags=["UI / Health"])
 async def root(request: Request):
     """Serves the Mediator web dashboard for browsers, or API metadata for JSON clients."""
     accept = request.headers.get("accept", "")
-    ui_path = os.path.join(os.path.dirname(__file__), "..", "dummy_frontend", "index.html")
-    if "text/html" in accept and os.path.exists(ui_path):
-        return FileResponse(ui_path, media_type="text/html")
+    if "text/html" in accept:
+        return await serve_dashboard()
     return {
         "name": settings.project_name,
         "version": settings.version,
@@ -139,10 +149,13 @@ async def health_check():
 
 @app.get("/dashboard", tags=["UI"], response_class=FileResponse)
 async def serve_dashboard():
-    """Serves the full Mediator interactive Web Dashboard."""
-    ui_path = os.path.join(os.path.dirname(__file__), "..", "dummy_frontend", "index.html")
-    if os.path.exists(ui_path):
-        return FileResponse(ui_path, media_type="text/html")
+    """Serves the full Mediator interactive Web Dashboard (React or fallback)."""
+    react_index = os.path.join(_frontend_dist, "index.html")
+    if os.path.exists(react_index):
+        return FileResponse(react_index, media_type="text/html")
+    dummy_ui_path = os.path.join(os.path.dirname(__file__), "..", "dummy_frontend", "index.html")
+    if os.path.exists(dummy_ui_path):
+        return FileResponse(dummy_ui_path, media_type="text/html")
     return JSONResponse(
         status_code=404,
         content={"detail": "Dashboard frontend file not found."},
@@ -151,7 +164,10 @@ async def serve_dashboard():
 
 @app.get("/test-ui", tags=["Test Harness"], response_class=FileResponse)
 async def serve_test_ui():
-    """Serves the Mediator dashboard (backward-compatible test UI route)."""
+    """Serves the legacy test console (backward-compatible test UI route)."""
+    dummy_ui_path = os.path.join(os.path.dirname(__file__), "..", "dummy_frontend", "index.html")
+    if os.path.exists(dummy_ui_path):
+        return FileResponse(dummy_ui_path, media_type="text/html")
     return await serve_dashboard()
 
 

@@ -1,0 +1,10 @@
+{
+  "description": "Enhance team collaboration with an AI-powered platform that identifies disagreements, compares perspectives, and facilitates shared decision-making.",
+  "robots": {
+    "index": false
+  },
+  "accessibility": {
+    "addBypassLinks": false,
+    "ignoreReducedMotion": false
+  }
+}

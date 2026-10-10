@@ -44,3 +44,8 @@ htmlcov/
 # Local databases
 *.db
 data/
+
+# Frontend
+node_modules/
+frontend/dist/
+frontend/.vite/
