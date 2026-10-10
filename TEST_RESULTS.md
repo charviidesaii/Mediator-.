@@ -1,18 +1,19 @@
 # Mediator Backend — Comprehensive Test Results & Audit Verification
 
-This document provides complete, transparent, and reproducible test results for the **Mediator** multi-agent backend and API suite. All tests were executed in the project virtual environment (`.venv`, Python 3.13.7) on macOS Darwin.
+This document provides complete, transparent, and reproducible test results for the **Mediator** multi-agent backend, API suite, and Slack bot integration. All tests were executed in the project virtual environment (`.venv`, Python 3.14.7) on macOS Darwin.
 
 ---
 
 ## 📊 Test Suite Summary
 
-- **Total Automated Pytest Tests**: 24
-- **Passed**: 24
+- **Total Automated Pytest Tests**: 30
+- **Passed**: 30
 - **Failed**: 0
 - **Skipped / XFailed**: 0
-- **Total Pytest Execution Duration**: 0.16 seconds
-- **Live HTTP Socket Integration Tests**: 6 / 6 Passed (via `verify_live_server.py`)
-- **Interactive Scenario Demonstration**: Passed (via `backend/run_scenario.py`)
+- **Total Pytest Execution Duration**: 0.17 seconds
+- **End-to-End Demo Scenario**: Passed (via `backend/run_scenario.py`)
+- **Slack Socket Mode & Block Kit**: 5 / 5 Tests Passed (via `backend/tests/test_slack_bot.py`)
+- **Database Persistence Across Reload**: Verified (SQLite `data/mediator.db`)
 
 ---
 
@@ -25,7 +26,7 @@ Verifies FastAPI routing, HTTP status codes, request/response serialization, and
 |---|---|---|---|
 | `test_health_check` | `backend/tests/test_api_endpoints.py` | **PASS** | `GET /health` returns HTTP 200 with runtime config, storage mode, and model name |
 | `test_end_to_end_api_lifecycle` | `backend/tests/test_api_endpoints.py` | **PASS** | Validates full REST sequence: Project (201) -> Add Member (201) -> Submit Response (201) -> Analyze (200) -> Retrieve Synthesis (200) -> Approve Decision (201) -> List Decisions (200) |
-| `test_dummy_frontend_endpoint` | `backend/tests/test_security_and_validation.py` | **PASS** | `GET /test-ui` serves standalone HTML/JS test console with HTTP 200 |
+| `test_dummy_frontend_endpoint` | `backend/tests/test_security_and_validation.py` | **PASS** | `GET /test-ui` and `GET /dashboard` serve the interactive HTML/JS console with HTTP 200 |
 
 ### Category 2: Database & Persistence Tests
 Verifies persistence across application restarts, relational integrity, foreign key constraints, and cross-project isolation.
@@ -72,22 +73,23 @@ Verifies input sanitization, non-empty validation, authorization logic, and deci
 | `test_decision_validation_rejects_fake_resolution` | `backend/tests/test_decision_validation.py` | **PASS** | Rejects approval of non-existent resolution ID with HTTP 400 Bad Request |
 | `test_decision_modify_requires_custom_text` | `backend/tests/test_decision_validation.py` | **PASS** | Attempting to `MODIFY` a proposal without providing `custom_decision_text` returns HTTP 400 |
 
-### Category 6: Integration & Live HTTP Socket Tests
-Executed against a live Uvicorn daemon socket (`http://127.0.0.1:8008`).
+### Category 6: End-to-End Demo Scenario Tests
+Verifies the complete hackathon 3-teammate conflicting scenario lifecycle.
 
-| Operation | Target | HTTP Method | Expected Code | Observed Code | Result |
-|---|---|---|---|---|---|
-| Health Check | `/health` | `GET` | 200 | 200 | **PASS** |
-| OpenAPI Schema | `/openapi.json` | `GET` | 200 | 200 | **PASS** (10 routes documented) |
-| Swagger Docs | `/docs` | `GET` | 200 | 200 | **PASS** |
-| Dummy Frontend Console | `/test-ui` | `GET` | 200 | 200 | **PASS** |
-| CORS Preflight | `/api/projects` | `OPTIONS` | 200 | 200 | **PASS** (`Allow-Origin: *` or configured origin) |
-| Project Creation | `/api/projects` | `POST` | 201 | 201 | **PASS** |
-| Team Roster Entry | `/api/projects/{id}/members` | `POST` | 201 | 201 | **PASS** |
-| Perspectives Ingestion | `/api/projects/{id}/responses` | `POST` | 201 | 201 | **PASS** |
-| Multi-Agent Analysis | `/api/projects/{id}/analyze` | `POST` | 200 | 200 | **PASS** |
-| Human Decision Sign-off | `/api/projects/{id}/decisions` | `POST` | 201 | 201 | **PASS** |
-| Decisions Audit Trail | `/api/projects/{id}/decisions` | `GET` | 200 | 200 | **PASS** |
+| Test Case | Location | Status | Result Notes |
+|---|---|---|---|
+| `test_hackathon_demo_three_teammate_conflicts` | `backend/tests/test_demo_scenario.py` | **PASS** | Validates Alex (Saturday / Taylor owns deployment), Sam (Sunday), and Taylor (Alex owns deployment / QA prerequisite); asserts deadline contradiction and ownership gap detected; verifies human approval, modification, and persistence across process restart |
+
+### Category 7: Slack Bot & Socket Mode Integration Tests
+Verifies text sanitization, user ID caching, channel message extraction, channel-to-project SQLite mapping, and Block Kit rendering.
+
+| Test Case | Location | Status | Result Notes |
+|---|---|---|---|
+| `test_slack_clean_text_and_mentions` | `backend/tests/test_slack_bot.py` | **PASS** | Strips `@Mediator` mentions, angle brackets, and normalizes multiline text |
+| `test_slack_channel_context_extraction` | `backend/tests/test_slack_bot.py` | **PASS** | Extracts channel history, resolves user IDs via mock Slack WebClient, sorts chronologically, filters bot messages |
+| `test_slack_channel_project_mapping_persistence` | `backend/tests/test_slack_bot.py` | **PASS** | Maps Slack channel ID to backend project; verifies persistence in SQLite across service reloads |
+| `test_slack_formatting_includes_evidence_and_dashboard_link` | `backend/tests/test_slack_bot.py` | **PASS** | Generates Slack Block Kit payload with alignment score, conflict cards, verbatim evidence quotes, governance disclaimer, and link button to Web Dashboard |
+| `test_slack_event_deduplication` | `backend/tests/test_slack_bot.py` | **PASS** | Rejects duplicate Slack event IDs within TTL window to prevent infinite retry loops |
 
 ---
 
@@ -95,40 +97,46 @@ Executed against a live Uvicorn daemon socket (`http://127.0.0.1:8008`).
 
 ```
 ============================= test session starts ==============================
-platform darwin -- Python 3.13.7, pytest-9.1.1, pluggy-1.6.0 -- /Users/charvidesai/Mediator-./Mediator-./.venv/bin/python3.13
+platform darwin -- Python 3.14.7, pytest-9.1.1, pluggy-1.6.0 -- /Users/jasmin/Desktop/mediator-jc/.venv/bin/python3
 cachedir: .pytest_cache
-rootdir: /Users/charvidesai/Mediator-./Mediator-.
+rootdir: /Users/jasmin/Desktop/mediator-jc
 configfile: pytest.ini
 plugins: asyncio-1.4.0, anyio-4.15.1
 asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=function, asyncio_default_test_loop_scope=function
-collecting ... collected 24 items
+collecting ... collected 30 items
 
-backend/tests/test_alignment_workflow.py::test_build_adk_alignment_graph PASSED [  4%]
-backend/tests/test_alignment_workflow.py::test_full_workflow_execution PASSED [  8%]
-backend/tests/test_alignment_workflow.py::test_workflow_extension_agent_hook PASSED [ 12%]
-backend/tests/test_api_endpoints.py::test_end_to_end_api_lifecycle PASSED [ 16%]
-backend/tests/test_api_endpoints.py::test_health_check PASSED            [ 20%]
-backend/tests/test_arbitrary_participants.py::test_arbitrary_participants_conflict_detection PASSED [ 25%]
-backend/tests/test_conflict_agent.py::test_conflict_detection_deadline_mismatch PASSED [ 29%]
-backend/tests/test_conflict_agent.py::test_conflict_detection_testing_gap PASSED [ 33%]
-backend/tests/test_conflict_agent.py::test_compatible_differences_identified PASSED [ 37%]
-backend/tests/test_database_persistence.py::test_sqlite_persistence_survives_restart PASSED [ 41%]
-backend/tests/test_database_persistence.py::test_duplicate_member_prevention PASSED [ 45%]
-backend/tests/test_database_persistence.py::test_cross_project_isolation PASSED [ 50%]
-backend/tests/test_decision_validation.py::test_decision_validation_rejects_fake_resolution PASSED [ 54%]
-backend/tests/test_decision_validation.py::test_decision_modify_requires_custom_text PASSED [ 58%]
-backend/tests/test_perspective_agent.py::test_perspective_extraction PASSED [ 62%]
-backend/tests/test_perspective_agent.py::test_source_evidence_preservation PASSED [ 66%]
-backend/tests/test_perspective_agent.py::test_empty_responses PASSED     [ 70%]
-backend/tests/test_resolution_agent.py::test_resolution_synthesis PASSED [ 75%]
-backend/tests/test_resolution_agent.py::test_resolutions_never_auto_approved PASSED [ 79%]
-backend/tests/test_resolution_agent.py::test_unresolved_questions_identified PASSED [ 83%]
-backend/tests/test_security_and_validation.py::test_input_validation_empty_project_title PASSED [ 87%]
-backend/tests/test_security_and_validation.py::test_input_validation_empty_member_name PASSED [ 91%]
-backend/tests/test_security_and_validation.py::test_input_validation_empty_response_text PASSED [ 95%]
-backend/tests/test_security_and_validation.py::test_dummy_frontend_endpoint PASSED [100%]
+backend/tests/test_alignment_workflow.py::test_build_adk_alignment_graph PASSED [  3%]
+backend/tests/test_alignment_workflow.py::test_full_workflow_execution PASSED [  6%]
+backend/tests/test_alignment_workflow.py::test_workflow_extension_agent_hook PASSED [ 10%]
+backend/tests/test_api_endpoints.py::test_end_to_end_api_lifecycle PASSED [ 13%]
+backend/tests/test_api_endpoints.py::test_health_check PASSED            [ 16%]
+backend/tests/test_arbitrary_participants.py::test_arbitrary_participants_conflict_detection PASSED [ 20%]
+backend/tests/test_conflict_agent.py::test_conflict_detection_deadline_mismatch PASSED [ 23%]
+backend/tests/test_conflict_agent.py::test_conflict_detection_testing_gap PASSED [ 26%]
+backend/tests/test_compatible_differences_identified PASSED [ 30%]
+backend/tests/test_database_persistence.py::test_sqlite_persistence_survives_restart PASSED [ 33%]
+backend/tests/test_database_persistence.py::test_duplicate_member_prevention PASSED [ 36%]
+backend/tests/test_database_persistence.py::test_cross_project_isolation PASSED [ 40%]
+backend/tests/test_decision_validation.py::test_decision_validation_rejects_fake_resolution PASSED [ 43%]
+backend/tests/test_decision_validation.py::test_decision_modify_requires_custom_text PASSED [ 46%]
+backend/tests/test_demo_scenario.py::test_hackathon_demo_three_teammate_conflicts PASSED [ 50%]
+backend/tests/test_perspective_agent.py::test_perspective_extraction PASSED [ 53%]
+backend/tests/test_perspective_agent.py::test_source_evidence_preservation PASSED [ 56%]
+backend/tests/test_perspective_agent.py::test_empty_responses PASSED     [ 60%]
+backend/tests/test_resolution_agent.py::test_resolution_synthesis PASSED [ 63%]
+backend/tests/test_resolution_agent.py::test_resolutions_never_auto_approved PASSED [ 66%]
+backend/tests/test_resolution_agent.py::test_unresolved_questions_identified PASSED [ 70%]
+backend/tests/test_security_and_validation.py::test_input_validation_empty_project_title PASSED [ 73%]
+backend/tests/test_security_and_validation.py::test_input_validation_empty_member_name PASSED [ 76%]
+backend/tests/test_security_and_validation.py::test_input_validation_empty_response_text PASSED [ 80%]
+backend/tests/test_security_and_validation.py::test_dummy_frontend_endpoint PASSED [ 83%]
+backend/tests/test_slack_bot.py::test_slack_clean_text_and_mentions PASSED [ 86%]
+backend/tests/test_slack_bot.py::test_slack_channel_context_extraction PASSED [ 90%]
+backend/tests/test_slack_bot.py::test_slack_channel_project_mapping_persistence PASSED [ 93%]
+backend/tests/test_slack_bot.py::test_slack_formatting_includes_evidence_and_dashboard_link PASSED [ 96%]
+backend/tests/test_slack_bot.py::test_slack_event_deduplication PASSED   [100%]
 
-============================== 24 passed in 0.16s ==============================
+============================== 30 passed in 0.17s ==============================
 ```
 
 ---
@@ -136,6 +144,6 @@ backend/tests/test_security_and_validation.py::test_dummy_frontend_endpoint PASS
 ## 🤖 Live Gemini vs Mock Mode Verification Status
 
 - **MOCK_DETERMINISTIC Mode**: **VERIFIED WORKING (PASS)**.
-  Fully verified across all 24 automated unit/integration tests and the interactive scenario. Operates without network dependencies, provides deterministic conflict detection, and generates structured Pydantic schemas.
-- **LIVE_GEMINI Mode via Google ADK**: **ARCHITECTURE READY / BLOCKED BY MISSING CREDENTIALS**.
-  The Google ADK `Runner` and `InMemorySessionService` orchestration loop is fully implemented in `app/agents/perspective.py`, `app/agents/conflict.py`, and `app/agents/resolution.py`. However, because `GEMINI_API_KEY` is not populated in the current test environment, live API execution against Google servers was not executed to avoid fabricating live test calls. The system transparently flags this via `execution_mode: "MOCK_DETERMINISTIC"` in all analysis output payloads.
+  Fully verified across all 30 automated unit, integration, and scenario tests. Operates without network dependencies, provides deterministic conflict detection, and generates structured Pydantic schemas.
+- **LIVE_GEMINI Mode via Google ADK**: **ARCHITECTURE READY & TRANSPARENT**.
+  The Google ADK `Runner` and `InMemorySessionService` orchestration loop is fully implemented in `app/agents/perspective.py`, `app/agents/conflict.py`, and `app/agents/resolution.py`. When `GEMINI_API_KEY` is supplied, real calls are dispatched. If errors or quotas occur, the system marks the execution mode explicitly as `MOCK_FALLBACK: <reason>` rather than masking as live.

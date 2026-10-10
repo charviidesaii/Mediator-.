@@ -171,6 +171,21 @@ class AlignmentWorkflow:
                 logger.warning(f"Extension agent {ext_agent.__name__} raised error: {ext_err}")
 
         duration = round(time.time() - start_time, 3)
+
+        # Accurately verify whether all stages genuinely executed live or fell back
+        stage_modes = [
+            self.perspective_service.last_execution_mode,
+            self.conflict_service.last_execution_mode,
+            self.resolution_service.last_execution_mode,
+        ]
+        if all(m == "LIVE_GEMINI" for m in stage_modes):
+            final_execution_mode = "LIVE_GEMINI"
+        elif any("FALLBACK" in m for m in stage_modes):
+            fallbacks = [m for m in stage_modes if "FALLBACK" in m]
+            final_execution_mode = f"MOCK_FALLBACK: {'; '.join(fallbacks)}"
+        else:
+            final_execution_mode = "MOCK_DETERMINISTIC"
+
         execution_metadata = {
             "workflow_id": workflow_id,
             "project_id": project_id,
@@ -187,10 +202,10 @@ class AlignmentWorkflow:
             "total_responses_analyzed": len(responses),
             "conflicts_detected": len(conflicts_output.conflicts),
             "resolutions_proposed": len(synthesis_output.proposed_resolutions),
-            "execution_mode": execution_mode,
+            "execution_mode": final_execution_mode,
         }
 
-        logger.info(f"Workflow [{workflow_id}] completed successfully in {duration}s [{execution_mode}]")
+        logger.info(f"Workflow [{workflow_id}] completed successfully in {duration}s [{final_execution_mode}]")
 
         return AlignmentWorkflowResult(
             workflow_id=workflow_id,
@@ -200,5 +215,5 @@ class AlignmentWorkflow:
             synthesis_output=synthesis_output,
             intermediate_results=intermediate_results,
             execution_metadata=execution_metadata,
-            execution_mode=execution_mode,
+            execution_mode=final_execution_mode,
         )

@@ -39,10 +39,11 @@ Your mission is to objectively compare structured team member perspectives and s
 Core Responsibilities:
 1. Systematically compare all team members' goals, priorities, responsibilities, and deadlines across all participants.
 2. Detect specific misalignments:
-   - Contradictory Deadlines: When one milestone is scheduled before its required dependency (e.g. Launching before feature completion).
-   - Incompatible Goals: Objectives that cannot simultaneously succeed given current resource/time boundaries.
-   - Priority Mismatches: Conflicting urgency or order of operations.
-   - Information Gaps: Crucial unstated dependencies (e.g. testing schedule unspecified).
+   - Contradictory Deadlines: When members expect different completion dates for the same project/milestone (e.g. Saturday vs Sunday), or when one milestone is scheduled before its required dependency (e.g. Launching on Thursday before Friday completion). Categorize as DEADLINE_CONTRADICTION.
+   - Unclear or Overlapping Responsibilities: Contradictory assumptions of task ownership (e.g. Member A believes Member B owns deployment, while Member B believes Member A owns it; or unassigned critical responsibilities). Categorize as RESPONSIBILITY_OVERLAP_OR_GAP.
+   - Incompatible Goals: Objectives that cannot simultaneously succeed given current resource/time boundaries. Categorize as GOAL_INCOMPATIBILITY.
+   - Priority Mismatches: Conflicting urgency or order of operations. Categorize as PRIORITY_MISMATCH.
+   - Information Gaps: Crucial unstated dependencies (e.g. testing schedule unspecified). Categorize as INFORMATION_GAP.
 3. DISTINGUISH DISAGREEMENTS FROM COMPATIBLE DIFFERENCES:
    - DIRECT_DISAGREEMENT: Mutually exclusive constraints that cannot coexist without compromise.
    - COMPATIBLE_DIFFERENCE: Non-conflicting variations in focus or responsibility that complement each other.
@@ -51,7 +52,7 @@ Core Responsibilities:
    - Every detected conflict MUST cite the exact statements/quotes from the team members in the `evidence` field.
    - Explicitly list all `parties_involved`.
 5. SEVERITY CRITERIA:
-   - HIGH: Blocking contradiction; physically or logically impossible to achieve without failure (e.g., launching an unbuilt or untested product).
+   - HIGH: Blocking contradiction; physically or logically impossible to achieve without failure (e.g., launching an unbuilt or untested product, or unowned critical deployment).
    - MEDIUM: Significant friction; timeline compression or unclarified dependencies that jeopardize project quality or team morale.
    - LOW: Minor difference in preference, terminology, or non-critical sequencing.
    - You MUST explain the rationale in `severity_reasoning`.
@@ -78,6 +79,7 @@ class ConflictDetectionService:
     def __init__(self, client: Optional[Client] = None):
         self.adk_agent = create_conflict_adk_agent()
         self.client = client
+        self.last_execution_mode: str = "MOCK_DETERMINISTIC"
         if self.client is None and settings.active_api_key:
             self.client = Client(api_key=settings.active_api_key)
 
@@ -86,6 +88,7 @@ class ConflictDetectionService:
     ) -> ConflictDetectionOutput:
         """Analyzes structured perspective output and detects conflicts."""
         if not perspective_data.perspectives or len(perspective_data.perspectives) < 2:
+            self.last_execution_mode = "MOCK_DETERMINISTIC"
             return ConflictDetectionOutput(
                 conflicts=[],
                 compatible_differences=["Single team member response or no perspectives provided."],
@@ -101,6 +104,7 @@ class ConflictDetectionService:
 
         # If mock mode is active or no Gemini API key is configured, run generalized deterministic detection
         if not settings.is_live_gemini_available:
+            self.last_execution_mode = "MOCK_DETERMINISTIC"
             logger.info("Conflict Detection running in deterministic mode (no live Gemini key or mock enabled)")
             return self._mock_detect(perspective_data)
 
@@ -135,6 +139,7 @@ class ConflictDetectionService:
 
                 if final_text.strip():
                     data = json.loads(final_text)
+                    self.last_execution_mode = "LIVE_GEMINI"
                     return ConflictDetectionOutput.model_validate(data)
 
             # Direct fallback if ADK runner stream is empty
@@ -151,13 +156,15 @@ class ConflictDetectionService:
             )
             if response.text:
                 data = json.loads(response.text)
+                self.last_execution_mode = "LIVE_GEMINI"
                 return ConflictDetectionOutput.model_validate(data)
             else:
                 raise ValueError("Empty response received from Gemini model.")
         except Exception as e:
             logger.error("Error executing Google ADK / Gemini for Conflict Detection: %s", e)
             if settings.app_env == "development" or settings.mock_llm:
-                logger.warning("Falling back to deterministic conflict detection after error.")
+                self.last_execution_mode = f"MOCK_FALLBACK ({type(e).__name__})"
+                logger.warning(f"Falling back to deterministic conflict detection after error: {e}")
                 return self._mock_detect(perspective_data)
             raise
 
@@ -197,12 +204,14 @@ class ConflictDetectionService:
                             rank1 = day_rank[d1_day]
                             rank2 = day_rank[d2_day]
 
-                            # Determine if one milestone is launch and the other is development/frontend/testing
+                            # Determine if one milestone is launch and the other is prerequisite development (frontend/backend/qa)
                             is_p1_launch = "launch" in d1.milestone.lower() or "release" in d1.milestone.lower()
                             is_p2_launch = "launch" in d2.milestone.lower() or "release" in d2.milestone.lower()
+                            is_p1_prereq = any(k in d1.milestone.lower() for k in ["frontend", "backend", "test", "qa", "api"])
+                            is_p2_prereq = any(k in d2.milestone.lower() for k in ["frontend", "backend", "test", "qa", "api"])
 
-                            # Case A: p1 expects launch before p2 finishes development
-                            if is_p1_launch and not is_p2_launch and rank1 < rank2:
+                            # Case A: p1 expects launch before p2 finishes prerequisite development
+                            if is_p1_launch and is_p2_prereq and rank1 < rank2:
                                 conflicts.append(
                                     DetectedConflict(
                                         conflict_id=f"CONF-{conflict_counter:02d}",
@@ -236,8 +245,8 @@ class ConflictDetectionService:
                                 )
                                 conflict_counter += 1
 
-                            # Case B: p2 expects launch before p1 finishes development
-                            elif is_p2_launch and not is_p1_launch and rank2 < rank1:
+                            # Case B: p2 expects launch before p1 finishes prerequisite development
+                            elif is_p2_launch and is_p1_prereq and rank2 < rank1:
                                 conflicts.append(
                                     DetectedConflict(
                                         conflict_id=f"CONF-{conflict_counter:02d}",
@@ -270,6 +279,106 @@ class ConflictDetectionService:
                                     )
                                 )
                                 conflict_counter += 1
+
+                            # Case C: Direct Target Deadline Disagreement (differing milestone targets)
+                            elif rank1 != rank2:
+                                already_has_deadline_conflict = any(
+                                    c.conflict_type == ConflictType.DEADLINE_CONTRADICTION
+                                    and p1.member_name in c.parties_involved
+                                    and p2.member_name in c.parties_involved
+                                    for c in conflicts
+                                )
+                                if not already_has_deadline_conflict:
+                                    conflicts.append(
+                                        DetectedConflict(
+                                            conflict_id=f"CONF-{conflict_counter:02d}",
+                                            title=f"Conflicting Target Deadlines: {p1.member_name} ({d1.expected_deadline}) vs {p2.member_name} ({d2.expected_deadline})",
+                                            conflict_type=ConflictType.DEADLINE_CONTRADICTION,
+                                            category=ConflictCategory.DIRECT_DISAGREEMENT,
+                                            severity=ConflictSeverity.HIGH,
+                                            severity_reasoning=(
+                                                f"Direct deadline disagreement: {p1.member_name} expects {d1.milestone} on {d1.expected_deadline}, "
+                                                f"whereas {p2.member_name} expects {d2.milestone} on {d2.expected_deadline}. "
+                                                "The team does not have a shared commitment for completion timing."
+                                            ),
+                                            parties_involved=[p1.member_name, p2.member_name],
+                                            evidence=[
+                                                EvidenceItem(
+                                                    member_name=p1.member_name,
+                                                    quote=d1.source_quote,
+                                                    interpretation=f"Expects deadline on {d1.expected_deadline}.",
+                                                ),
+                                                EvidenceItem(
+                                                    member_name=p2.member_name,
+                                                    quote=d2.source_quote,
+                                                    interpretation=f"Expects deadline on {d2.expected_deadline}.",
+                                                ),
+                                            ],
+                                            impact_description=(
+                                                f"Timeline friction and lack of synchronized delivery targets between "
+                                                f"{p1.member_name} and {p2.member_name}."
+                                            ),
+                                        )
+                                    )
+                                    conflict_counter += 1
+
+                # Dynamic Responsibility & Ownership Confusion Search between p1 and p2
+                for r1 in p1.responsibilities:
+                    for r2 in p2.responsibilities:
+                        # Compare responsibilities of the same domain (e.g. deployment, testing, api)
+                        if r1.responsibility.lower() == r2.responsibility.lower():
+                            # If they assign to different people, or mutual finger-pointing
+                            assigned1 = r1.assigned_to.strip().lower()
+                            assigned2 = r2.assigned_to.strip().lower()
+                            p1_name = p1.member_name.strip().lower()
+                            p2_name = p2.member_name.strip().lower()
+
+                            is_mismatch = (
+                                assigned1 != assigned2
+                                or (assigned1 == p2_name and assigned2 == p1_name)
+                                or (assigned1 not in [p1_name, p2_name] and assigned2 not in [p1_name, p2_name] and assigned1 != assigned2)
+                            )
+                            if is_mismatch:
+                                already_has_resp_conflict = any(
+                                    c.conflict_type == ConflictType.RESPONSIBILITY_OVERLAP_OR_GAP
+                                    and p1.member_name in c.parties_involved
+                                    and p2.member_name in c.parties_involved
+                                    and r1.responsibility.lower() in c.title.lower()
+                                    for c in conflicts
+                                )
+                                if not already_has_resp_conflict:
+                                    conflicts.append(
+                                        DetectedConflict(
+                                            conflict_id=f"CONF-{conflict_counter:02d}",
+                                            title=f"Unclear Task Ownership: {r1.responsibility} Between {p1.member_name} and {p2.member_name}",
+                                            conflict_type=ConflictType.RESPONSIBILITY_OVERLAP_OR_GAP,
+                                            category=ConflictCategory.DIRECT_DISAGREEMENT,
+                                            severity=ConflictSeverity.HIGH,
+                                            severity_reasoning=(
+                                                f"Ownership confusion: {p1.member_name} assumes {r1.assigned_to} is responsible for {r1.responsibility}, "
+                                                f"while {p2.member_name} assumes {r2.assigned_to} is responsible for it. "
+                                                f"Neither teammate has taken explicit verified accountability for {r1.responsibility}."
+                                            ),
+                                            parties_involved=[p1.member_name, p2.member_name],
+                                            evidence=[
+                                                EvidenceItem(
+                                                    member_name=p1.member_name,
+                                                    quote=r1.source_quote,
+                                                    interpretation=f"Believes {r1.assigned_to} owns {r1.responsibility}.",
+                                                ),
+                                                EvidenceItem(
+                                                    member_name=p2.member_name,
+                                                    quote=r2.source_quote,
+                                                    interpretation=f"Believes {r2.assigned_to} owns {r2.responsibility}.",
+                                                ),
+                                            ],
+                                            impact_description=(
+                                                f"Critical delivery blocker: without a designated single owner, "
+                                                f"{r1.responsibility} may be completely dropped or delayed."
+                                            ),
+                                        )
+                                    )
+                                    conflict_counter += 1
 
         # 2. Dynamic Testing / QA Unbudgeted Dependency Detection
         testers = [p for p in perspectives if any("test" in g.statement.lower() or "qa" in g.statement.lower() for g in p.goals)]

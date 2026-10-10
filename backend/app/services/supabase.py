@@ -85,6 +85,14 @@ CREATE TABLE IF NOT EXISTS confirmed_decisions (
     notes TEXT,
     FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
 );
+
+CREATE TABLE IF NOT EXISTS slack_channel_mappings (
+    channel_id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL,
+    channel_name TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
+);
 """
 
 
@@ -100,6 +108,7 @@ class StorageService:
         self._responses: Dict[str, List[MemberResponse]] = {}
         self._reports: Dict[str, SynthesisReport] = {}
         self._decisions: Dict[str, List[ConfirmedDecision]] = {}
+        self._channel_mappings: Dict[str, dict] = {}
 
         self._initialized = False
 
@@ -453,7 +462,81 @@ class StorageService:
 
         return self._decisions.get(project_id, [])
 
+    # -------------------------------------------------------------
+    # Slack Channel to Project Mappings
+    # -------------------------------------------------------------
+    async def set_channel_mapping(
+        self, channel_id: str, project_id: str, channel_name: Optional[str] = None
+    ) -> dict:
+        """Associates a Slack channel ID with a Mediator Project ID."""
+        await self.initialize()
+        now = datetime.now(timezone.utc)
+        record = {
+            "channel_id": channel_id,
+            "project_id": project_id,
+            "channel_name": channel_name,
+            "created_at": now.isoformat(),
+        }
+
+        if self.backend == "sqlite":
+            async with aiosqlite.connect(self.db_path) as db:
+                await db.execute(
+                    "INSERT INTO slack_channel_mappings (channel_id, project_id, channel_name, created_at) "
+                    "VALUES (?, ?, ?, ?) "
+                    "ON CONFLICT(channel_id) DO UPDATE SET project_id = excluded.project_id, channel_name = excluded.channel_name",
+                    (channel_id, project_id, channel_name, now.isoformat()),
+                )
+                await db.commit()
+        else:
+            self._channel_mappings[channel_id] = record
+
+        return record
+
+    async def get_channel_mapping(self, channel_id: str) -> Optional[dict]:
+        """Looks up the project mapping for a given Slack channel ID."""
+        await self.initialize()
+        if self.backend == "sqlite":
+            async with aiosqlite.connect(self.db_path) as db:
+                db.row_factory = aiosqlite.Row
+                async with db.execute(
+                    "SELECT channel_id, project_id, channel_name, created_at FROM slack_channel_mappings WHERE channel_id = ?",
+                    (channel_id,),
+                ) as cursor:
+                    row = await cursor.fetchone()
+                    if row:
+                        return {
+                            "channel_id": row["channel_id"],
+                            "project_id": row["project_id"],
+                            "channel_name": row["channel_name"],
+                            "created_at": row["created_at"],
+                        }
+            return None
+
+        return self._channel_mappings.get(channel_id)
+
+    async def get_or_create_project_for_channel(
+        self, channel_id: str, channel_name: Optional[str] = None
+    ) -> Project:
+        """Returns existing project mapped to channel or creates a new dedicated project."""
+        await self.initialize()
+        mapping = await self.get_channel_mapping(channel_id)
+        if mapping:
+            existing = await self.get_project(mapping["project_id"])
+            if existing:
+                return existing
+
+        # Create new project
+        c_label = f"#{channel_name}" if channel_name else channel_id
+        project_in = ProjectCreate(
+            title=f"Slack Channel {c_label}",
+            description=f"Auto-created workspace for Slack channel {channel_id}",
+        )
+        project = await self.create_project(project_in)
+        await self.set_channel_mapping(channel_id, project.id, channel_name)
+        return project
+
 
 # Unified singleton storage instance
 storage_service = StorageService()
 SupabaseStorageService = StorageService  # Backward compatibility alias
+

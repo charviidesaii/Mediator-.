@@ -60,8 +60,19 @@ CREATE TABLE IF NOT EXISTS confirmed_decisions (
     FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
 );
 
+-- Slack Channel Mappings Table
+CREATE TABLE IF NOT EXISTS slack_channel_mappings (
+    channel_id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL,
+    channel_name TEXT,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
+);
+
 -- Indexes for performance and isolation
 CREATE INDEX IF NOT EXISTS idx_team_members_project ON team_members(project_id);
 CREATE INDEX IF NOT EXISTS idx_member_responses_project ON member_responses(project_id);
 CREATE INDEX IF NOT EXISTS idx_analyses_project ON alignment_analyses(project_id);
 CREATE INDEX IF NOT EXISTS idx_decisions_project ON confirmed_decisions(project_id);
+CREATE INDEX IF NOT EXISTS idx_slack_channels_project ON slack_channel_mappings(project_id);
+

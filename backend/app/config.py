@@ -45,6 +45,12 @@ class Settings(BaseSettings):
         alias="CORS_ORIGINS",
     )
 
+    # Slack Bot Configuration (Socket Mode & Bot Token)
+    slack_bot_token: Optional[str] = Field(default=None, alias="SLACK_BOT_TOKEN")
+    slack_app_token: Optional[str] = Field(default=None, alias="SLACK_APP_TOKEN")
+    slack_signing_secret: Optional[str] = Field(default=None, alias="SLACK_SIGNING_SECRET")
+    dashboard_base_url: str = Field(default="http://localhost:8000", alias="DASHBOARD_BASE_URL")
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",
@@ -60,6 +66,11 @@ class Settings(BaseSettings):
     def is_live_gemini_available(self) -> bool:
         """Indicates whether real Gemini execution is available."""
         return bool(self.active_api_key) and not self.mock_llm
+
+    @property
+    def is_slack_configured(self) -> bool:
+        """Indicates whether Slack Socket Mode credentials are configured."""
+        return bool(self.slack_bot_token and self.slack_app_token)
 
 
 settings = Settings()

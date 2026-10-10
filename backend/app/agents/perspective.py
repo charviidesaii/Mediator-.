@@ -72,6 +72,7 @@ class PerspectiveAnalysisService:
     def __init__(self, client: Optional[Client] = None):
         self.adk_agent = create_perspective_adk_agent()
         self.client = client
+        self.last_execution_mode: str = "MOCK_DETERMINISTIC"
         if self.client is None and settings.active_api_key:
             self.client = Client(api_key=settings.active_api_key)
 
@@ -80,6 +81,7 @@ class PerspectiveAnalysisService:
     ) -> PerspectiveAnalysisOutput:
         """Processes submitted teammate responses and extracts structured perspectives."""
         if not responses:
+            self.last_execution_mode = "MOCK_DETERMINISTIC"
             return PerspectiveAnalysisOutput(
                 perspectives=[],
                 total_members_analyzed=0,
@@ -105,6 +107,7 @@ class PerspectiveAnalysisService:
 
         # If mock mode is active or no Gemini API key is configured, run generalized deterministic analysis
         if not settings.is_live_gemini_available:
+            self.last_execution_mode = "MOCK_DETERMINISTIC"
             logger.info("Perspective Analysis running in deterministic mode (no live Gemini key or mock enabled)")
             return self._mock_analyze(responses)
 
@@ -140,6 +143,7 @@ class PerspectiveAnalysisService:
 
                 if final_text.strip():
                     data = json.loads(final_text)
+                    self.last_execution_mode = "LIVE_GEMINI"
                     return PerspectiveAnalysisOutput.model_validate(data)
 
             # Direct fallback if ADK runner stream is empty
@@ -156,13 +160,15 @@ class PerspectiveAnalysisService:
             )
             if response.text:
                 data = json.loads(response.text)
+                self.last_execution_mode = "LIVE_GEMINI"
                 return PerspectiveAnalysisOutput.model_validate(data)
             else:
                 raise ValueError("Empty response received from Gemini model.")
         except Exception as e:
             logger.error("Error executing Google ADK / Gemini for Perspective Analysis: %s", e)
             if settings.app_env == "development" or settings.mock_llm:
-                logger.warning("Falling back to deterministic perspective extraction after error.")
+                self.last_execution_mode = f"MOCK_FALLBACK ({type(e).__name__})"
+                logger.warning(f"Falling back to deterministic perspective extraction after error: {e}")
                 return self._mock_analyze(responses)
             raise
 
@@ -196,6 +202,8 @@ class PerspectiveAnalysisService:
                         milestone = "Full Application Launch"
                     elif "test" in text_lower or "qa" in text_lower:
                         milestone = "Testing Completion"
+                    elif "deadline" in text_lower or "project" in text_lower:
+                        milestone = "Project Target Deadline"
 
                     deadlines.append(
                         DeadlineItem(
@@ -233,6 +241,36 @@ class PerspectiveAnalysisService:
                 )
 
             # 3. Dynamic Goals & Responsibilities
+            # Check for explicit task ownership statements (e.g. "Alex owns deployment", "I believe Taylor owns deployment")
+            ownership_match = re.search(
+                r"(?:i\s+(?:believe|think)\s+)?([A-Za-z]+)\s+(?:owns|is responsible for|handles)\s+([a-zA-Z\s]+?)(?:\.|$|,|and|\s+while)",
+                text,
+                re.IGNORECASE,
+            )
+            if ownership_match:
+                owner_target = ownership_match.group(1).strip()
+                # If pronoun "I", resolve to the author's own name
+                if owner_target.lower() in ["i", "me", "myself"]:
+                    owner_target = name
+                task_name = ownership_match.group(2).strip()
+                # Clean punctuation
+                task_name = re.sub(r"[^\w\s]", "", task_name).strip()
+                if task_name:
+                    responsibilities.append(
+                        ResponsibilityItem(
+                            responsibility=task_name.capitalize(),
+                            assigned_to=owner_target,
+                            source_quote=text,
+                        )
+                    )
+                    goals.append(
+                        GoalItem(
+                            statement=f"Ensure {task_name.lower()} is owned and delivered",
+                            source_quote=text,
+                            clarity="CLEAR",
+                        )
+                    )
+
             if "frontend" in text_lower or "ui" in text_lower:
                 goals.append(
                     GoalItem(
@@ -241,13 +279,14 @@ class PerspectiveAnalysisService:
                         clarity="CLEAR",
                     )
                 )
-                responsibilities.append(
-                    ResponsibilityItem(
-                        responsibility="Frontend delivery",
-                        assigned_to=name,
-                        source_quote=text,
+                if not any(r.responsibility.lower() == "frontend delivery" for r in responsibilities):
+                    responsibilities.append(
+                        ResponsibilityItem(
+                            responsibility="Frontend delivery",
+                            assigned_to=name,
+                            source_quote=text,
+                        )
                     )
-                )
             if "backend" in text_lower or "api" in text_lower:
                 goals.append(
                     GoalItem(
@@ -256,13 +295,14 @@ class PerspectiveAnalysisService:
                         clarity="CLEAR",
                     )
                 )
-                responsibilities.append(
-                    ResponsibilityItem(
-                        responsibility="Backend engineering",
-                        assigned_to=name,
-                        source_quote=text,
+                if not any(r.responsibility.lower() == "backend engineering" for r in responsibilities):
+                    responsibilities.append(
+                        ResponsibilityItem(
+                            responsibility="Backend engineering",
+                            assigned_to=name,
+                            source_quote=text,
+                        )
                     )
-                )
             if "launch" in text_lower or "release" in text_lower:
                 goals.append(
                     GoalItem(
@@ -271,13 +311,14 @@ class PerspectiveAnalysisService:
                         clarity="CLEAR",
                     )
                 )
-                responsibilities.append(
-                    ResponsibilityItem(
-                        responsibility="Release coordination",
-                        assigned_to="Team",
-                        source_quote=text,
+                if not any(r.responsibility.lower() == "release coordination" for r in responsibilities):
+                    responsibilities.append(
+                        ResponsibilityItem(
+                            responsibility="Release coordination",
+                            assigned_to="Team",
+                            source_quote=text,
+                        )
                     )
-                )
             if "test" in text_lower or "qa" in text_lower:
                 goals.append(
                     GoalItem(
@@ -286,9 +327,18 @@ class PerspectiveAnalysisService:
                         clarity="CLEAR",
                     )
                 )
+                if not any(r.responsibility.lower() == "quality assurance" for r in responsibilities):
+                    responsibilities.append(
+                        ResponsibilityItem(
+                            responsibility="Quality Assurance",
+                            assigned_to=name,
+                            source_quote=text,
+                        )
+                    )
+            if ("deploy" in text_lower or "deployment" in text_lower) and not any(r.responsibility.lower() == "deployment" for r in responsibilities):
                 responsibilities.append(
                     ResponsibilityItem(
-                        responsibility="Quality Assurance",
+                        responsibility="Deployment",
                         assigned_to=name,
                         source_quote=text,
                     )

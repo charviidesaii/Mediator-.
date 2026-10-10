@@ -56,9 +56,9 @@ async def main():
     print(f"Created Project: {BOLD}{project.title}{RESET} (ID: {project.id})\n")
 
     sample_inputs = [
-        ("Alex", "Our priority is completing the frontend by Friday."),
-        ("Sam", "I thought we agreed to launch the entire application on Thursday."),
-        ("Taylor", "I think we should complete testing before launching anything."),
+        ("Alex", "The project deadline is Saturday and I believe Taylor owns deployment."),
+        ("Sam", "The project deadline is Sunday and we need full feature completion before launch."),
+        ("Taylor", "I believe Alex owns deployment, and we must complete thorough testing before launching anything."),
     ]
 
     submitted_responses = []

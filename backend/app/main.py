@@ -103,18 +103,24 @@ app.include_router(analysis_router, prefix=settings.api_prefix)
 app.include_router(decisions_router, prefix=settings.api_prefix)
 
 
-@app.get("/", tags=["Health"])
-async def root():
-    """Root status endpoint with API links."""
+@app.get("/", tags=["UI / Health"])
+async def root(request: Request):
+    """Serves the Mediator web dashboard for browsers, or API metadata for JSON clients."""
+    accept = request.headers.get("accept", "")
+    ui_path = os.path.join(os.path.dirname(__file__), "..", "dummy_frontend", "index.html")
+    if "text/html" in accept and os.path.exists(ui_path):
+        return FileResponse(ui_path, media_type="text/html")
     return {
         "name": settings.project_name,
         "version": settings.version,
         "status": "online",
         "docs_url": "/docs",
         "redoc_url": "/redoc",
+        "dashboard_url": "/dashboard",
         "test_ui_url": "/test-ui",
         "api_prefix": settings.api_prefix,
         "storage_backend": settings.storage_backend,
+        "slack_configured": settings.is_slack_configured,
     }
 
 
@@ -127,19 +133,26 @@ async def health_check():
         "api_key_configured": bool(settings.active_api_key),
         "storage_backend": settings.storage_backend,
         "auth_enabled": settings.auth_enabled,
+        "slack_configured": settings.is_slack_configured,
     }
 
 
-@app.get("/test-ui", tags=["Test Harness"], response_class=FileResponse)
-async def serve_test_ui():
-    """Serves the minimal dummy frontend test harness."""
+@app.get("/dashboard", tags=["UI"], response_class=FileResponse)
+async def serve_dashboard():
+    """Serves the full Mediator interactive Web Dashboard."""
     ui_path = os.path.join(os.path.dirname(__file__), "..", "dummy_frontend", "index.html")
     if os.path.exists(ui_path):
         return FileResponse(ui_path, media_type="text/html")
     return JSONResponse(
         status_code=404,
-        content={"detail": "Dummy frontend test file not found."},
+        content={"detail": "Dashboard frontend file not found."},
     )
+
+
+@app.get("/test-ui", tags=["Test Harness"], response_class=FileResponse)
+async def serve_test_ui():
+    """Serves the Mediator dashboard (backward-compatible test UI route)."""
+    return await serve_dashboard()
 
 
 if __name__ == "__main__":

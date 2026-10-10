@@ -3,545 +3,1663 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Mediator — Test Harness (Dummy Frontend)</title>
+  <title>Mediator — AI Team Alignment Platform</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
   <style>
     :root {
-      --bg: #0f172a;
-      --card-bg: #1e293b;
-      --border: #334155;
-      --text: #f8fafc;
-      --muted: #94a3b8;
-      --accent: #38bdf8;
-      --accent-hover: #0284c7;
-      --success: #22c55e;
-      --danger: #ef4444;
+      --bg: #0b0f19;
+      --surface: #111827;
+      --surface-card: #1f2937;
+      --surface-elevated: #283548;
+      --border: #374151;
+      --border-focus: #6366f1;
+      --text: #f9fafb;
+      --text-muted: #9ca3af;
+      --text-dim: #6b7280;
+      --accent: #6366f1;
+      --accent-hover: #4f46e5;
+      --accent-light: rgba(99, 102, 241, 0.15);
+      --cyan: #06b6d4;
+      --cyan-light: rgba(6, 182, 212, 0.15);
+      --success: #10b981;
+      --success-light: rgba(16, 185, 129, 0.15);
       --warning: #f59e0b;
+      --warning-light: rgba(245, 158, 11, 0.15);
+      --danger: #ef4444;
+      --danger-light: rgba(239, 68, 68, 0.15);
+      --gradient-accent: linear-gradient(135deg, #6366f1 0%, #06b6d4 100%);
+      --radius: 10px;
+      --shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.5), 0 8px 10px -6px rgba(0, 0, 0, 0.5);
     }
+
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body {
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, monospace;
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
       background: var(--bg);
       color: var(--text);
-      padding: 24px;
       line-height: 1.5;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
     }
+
+    /* Top Navigation Bar */
     header {
+      background: rgba(17, 24, 39, 0.85);
+      backdrop-filter: blur(12px);
       border-bottom: 1px solid var(--border);
-      padding-bottom: 16px;
-      margin-bottom: 24px;
+      padding: 16px 28px;
+      position: sticky;
+      top: 0;
+      z-index: 50;
       display: flex;
       justify-content: space-between;
       align-items: center;
       flex-wrap: wrap;
       gap: 16px;
     }
-    h1 { font-size: 1.5rem; color: var(--accent); }
-    .badge {
-      display: inline-block;
-      padding: 4px 10px;
-      border-radius: 9999px;
-      font-size: 0.8rem;
-      font-weight: bold;
-    }
-    .badge-online { background: #064e3b; color: var(--success); border: 1px solid var(--success); }
-    .badge-offline { background: #7f1d1d; color: var(--danger); border: 1px solid var(--danger); }
-    
-    .config-bar {
+
+    .brand {
       display: flex;
-      gap: 12px;
       align-items: center;
-      background: var(--card-bg);
-      padding: 12px 16px;
-      border-radius: 6px;
-      border: 1px solid var(--border);
-      margin-bottom: 24px;
-    }
-    input, textarea, select, button {
-      font-family: inherit;
-      font-size: 0.9rem;
-      padding: 8px 12px;
-      border-radius: 4px;
-      border: 1px solid var(--border);
-      background: #0b1120;
+      gap: 12px;
+      text-decoration: none;
       color: var(--text);
     }
+    .brand-icon {
+      width: 36px;
+      height: 36px;
+      border-radius: 8px;
+      background: var(--gradient-accent);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 1.2rem;
+      font-weight: bold;
+      color: white;
+      box-shadow: 0 0 15px rgba(99, 102, 241, 0.4);
+    }
+    .brand-title {
+      font-size: 1.25rem;
+      font-weight: 700;
+      letter-spacing: -0.02em;
+      background: linear-gradient(135deg, #ffffff 40%, #94a3b8 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+    .brand-subtitle {
+      font-size: 0.75rem;
+      color: var(--cyan);
+      font-weight: 500;
+      letter-spacing: 0.05em;
+      text-transform: uppercase;
+    }
+
+    .nav-stats {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      flex-wrap: wrap;
+    }
+
+    .status-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 5px 12px;
+      border-radius: 9999px;
+      font-size: 0.8rem;
+      font-weight: 500;
+      border: 1px solid var(--border);
+      background: var(--surface);
+    }
+    .pulse-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--success);
+      box-shadow: 0 0 8px var(--success);
+      animation: pulse 2s infinite;
+    }
+    @keyframes pulse {
+      0% { transform: scale(0.95); opacity: 0.8; }
+      50% { transform: scale(1.2); opacity: 1; }
+      100% { transform: scale(0.95); opacity: 0.8; }
+    }
+
+    /* Project Switcher Bar */
+    .project-bar {
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      padding: 12px 28px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 12px;
+    }
+
+    .project-selector-group {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex: 1;
+      max-width: 600px;
+    }
+
+    select, input, textarea {
+      font-family: inherit;
+      background: #0b0f19;
+      color: var(--text);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 8px 12px;
+      font-size: 0.9rem;
+      outline: none;
+      transition: all 0.2s ease;
+    }
+    select:focus, input:focus, textarea:focus {
+      border-color: var(--border-focus);
+      box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.2);
+    }
+
     button {
-      background: var(--accent);
-      color: #0b1120;
+      font-family: inherit;
+      font-size: 0.875rem;
       font-weight: 600;
+      padding: 8px 16px;
+      border-radius: 6px;
       cursor: pointer;
       border: none;
-      transition: background 0.15s ease;
+      transition: all 0.2s ease;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      justify-content: center;
     }
-    button:hover { background: var(--accent-hover); }
-    button.btn-danger { background: var(--danger); color: white; }
-    button.btn-success { background: var(--success); color: #0b1120; }
-    button.btn-warning { background: var(--warning); color: #0b1120; }
+    .btn-primary {
+      background: var(--gradient-accent);
+      color: white;
+      box-shadow: 0 2px 10px rgba(99, 102, 241, 0.3);
+    }
+    .btn-primary:hover {
+      opacity: 0.92;
+      transform: translateY(-1px);
+    }
+    .btn-secondary {
+      background: var(--surface-card);
+      color: var(--text);
+      border: 1px solid var(--border);
+    }
+    .btn-secondary:hover {
+      background: var(--surface-elevated);
+    }
+    .btn-success { background: var(--success); color: #0b0f19; }
+    .btn-success:hover { background: #059669; color: white; }
+    .btn-danger { background: var(--danger); color: white; }
+    .btn-danger:hover { background: #dc2626; }
+    .btn-warning { background: var(--warning); color: #0b0f19; }
+    .btn-warning:hover { background: #d97706; color: white; }
 
-    .grid {
+    /* Navigation Tabs */
+    .tabs-nav {
+      display: flex;
+      border-bottom: 1px solid var(--border);
+      background: #0d1322;
+      padding: 0 28px;
+      gap: 4px;
+      overflow-x: auto;
+    }
+    .tab-btn {
+      background: transparent;
+      color: var(--text-muted);
+      border: none;
+      border-bottom: 2px solid transparent;
+      border-radius: 0;
+      padding: 14px 18px;
+      font-size: 0.9rem;
+      font-weight: 500;
+      cursor: pointer;
+      white-space: nowrap;
+    }
+    .tab-btn:hover {
+      color: var(--text);
+    }
+    .tab-btn.active {
+      color: var(--cyan);
+      border-bottom-color: var(--cyan);
+      font-weight: 600;
+    }
+
+    /* Main Container */
+    main {
+      flex: 1;
+      max-width: 1400px;
+      width: 100%;
+      margin: 0 auto;
+      padding: 28px;
+    }
+
+    .tab-content { display: none; }
+    .tab-content.active { display: block; }
+
+    /* Grid Layouts */
+    .grid-2 {
       display: grid;
       grid-template-columns: 1fr 1fr;
       gap: 24px;
     }
-    @media (max-width: 900px) { .grid { grid-template-columns: 1fr; } }
-    
-    .panel {
-      background: var(--card-bg);
+    .grid-3 {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 20px;
+    }
+    @media (max-width: 992px) {
+      .grid-2, .grid-3 { grid-template-columns: 1fr; }
+    }
+
+    /* Cards */
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 22px;
+      box-shadow: var(--shadow);
+      margin-bottom: 24px;
+      position: relative;
+    }
+    .card-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 16px;
+      padding-bottom: 12px;
+      border-bottom: 1px solid var(--border);
+    }
+    .card-title {
+      font-size: 1.15rem;
+      font-weight: 700;
+      color: var(--text);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .card-desc {
+      font-size: 0.85rem;
+      color: var(--text-muted);
+      margin-bottom: 16px;
+    }
+
+    /* Form Groups */
+    .form-group {
+      margin-bottom: 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+    label {
+      font-size: 0.8rem;
+      font-weight: 600;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+
+    /* Pill Badges */
+    .badge {
+      display: inline-block;
+      padding: 3px 8px;
+      border-radius: 4px;
+      font-size: 0.75rem;
+      font-weight: 700;
+      letter-spacing: 0.03em;
+    }
+    .badge-high { background: var(--danger-light); color: var(--danger); border: 1px solid var(--danger); }
+    .badge-medium { background: var(--warning-light); color: var(--warning); border: 1px solid var(--warning); }
+    .badge-low { background: var(--cyan-light); color: var(--cyan); border: 1px solid var(--cyan); }
+    .badge-proposed { background: rgba(99, 102, 241, 0.2); color: #818cf8; border: 1px solid #6366f1; }
+    .badge-approved { background: var(--success-light); color: var(--success); border: 1px solid var(--success); }
+    .badge-modified { background: var(--warning-light); color: var(--warning); border: 1px solid var(--warning); }
+    .badge-rejected { background: var(--danger-light); color: var(--danger); border: 1px solid var(--danger); }
+
+    /* Alert / Notification Banners */
+    .toast {
+      position: fixed;
+      bottom: 24px;
+      right: 24px;
+      z-index: 9999;
+      padding: 12px 20px;
+      border-radius: 8px;
+      font-size: 0.9rem;
+      font-weight: 500;
+      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.7);
+      display: none;
+      max-width: 450px;
+      border: 1px solid transparent;
+      animation: slideIn 0.25s ease-out;
+    }
+    @keyframes slideIn {
+      from { transform: translateY(20px); opacity: 0; }
+      to { transform: translateY(0); opacity: 1; }
+    }
+    .toast-success { background: #064e3b; border-color: var(--success); color: #d1fae5; }
+    .toast-error { background: #7f1d1d; border-color: var(--danger); color: #fee2e2; }
+
+    /* Alignment Score Meter */
+    .meter-container {
+      background: var(--surface-card);
+      border-radius: 12px;
+      padding: 24px;
+      margin-bottom: 24px;
+      display: flex;
+      align-items: center;
+      gap: 28px;
+      border: 1px solid var(--border);
+    }
+    .meter-circle {
+      width: 100px;
+      height: 100px;
+      border-radius: 50%;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      font-size: 1.7rem;
+      font-weight: 800;
+      flex-shrink: 0;
+      border: 4px solid var(--cyan);
+      box-shadow: 0 0 20px rgba(6, 182, 212, 0.3);
+      color: white;
+      background: #091224;
+    }
+    .meter-circle span { font-size: 0.65rem; font-weight: 600; color: var(--text-muted); }
+    .meter-info { flex: 1; }
+    .meter-title { font-size: 1.2rem; font-weight: 700; margin-bottom: 6px; }
+    .meter-summary { font-size: 0.9rem; color: var(--text-muted); line-height: 1.5; }
+
+    /* Item Box / Perspective Card */
+    .item-box {
+      background: #090e1a;
       border: 1px solid var(--border);
       border-radius: 8px;
-      padding: 18px;
-      margin-bottom: 20px;
+      padding: 16px;
+      margin-bottom: 12px;
+      transition: border-color 0.15s ease;
     }
-    .panel h2 { font-size: 1.1rem; margin-bottom: 12px; color: var(--accent); border-bottom: 1px solid var(--border); padding-bottom: 6px; }
-    .form-group { margin-bottom: 12px; display: flex; flex-direction: column; gap: 4px; }
-    label { font-size: 0.8rem; color: var(--muted); }
+    .item-box:hover {
+      border-color: #4b5563;
+    }
+    .item-box-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 8px;
+    }
 
-    .status-box {
-      padding: 10px 14px;
-      border-radius: 6px;
-      margin-bottom: 16px;
+    /* Evidence Quotes */
+    .evidence-block {
+      background: rgba(15, 23, 42, 0.8);
+      border-left: 3px solid var(--cyan);
+      padding: 8px 12px;
+      border-radius: 0 6px 6px 0;
+      margin-top: 8px;
       font-size: 0.85rem;
-      display: none;
     }
-    .status-success { background: #064e3b; border: 1px solid var(--success); color: #dcfce7; display: block; }
-    .status-error { background: #7f1d1d; border: 1px solid var(--danger); color: #fee2e2; display: block; }
+    .evidence-quote { font-style: italic; color: #e2e8f0; }
+    .evidence-note { font-size: 0.75rem; color: var(--text-muted); margin-top: 4px; }
 
-    pre {
-      background: #020617;
-      border: 1px solid var(--border);
-      padding: 12px;
+    /* Unresolved Questions */
+    .question-list {
+      background: rgba(245, 158, 11, 0.08);
+      border: 1px dashed rgba(245, 158, 11, 0.3);
       border-radius: 6px;
+      padding: 10px 14px;
+      margin-top: 10px;
+    }
+    .question-list li {
+      font-size: 0.85rem;
+      color: #fef3c7;
+      margin-left: 18px;
+      margin-bottom: 4px;
+    }
+
+    /* Modal */
+    .modal-backdrop {
+      position: fixed;
+      top: 0; left: 0; right: 0; bottom: 0;
+      background: rgba(0, 0, 0, 0.75);
+      backdrop-filter: blur(4px);
+      z-index: 1000;
+      display: none;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+    }
+    .modal {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      max-width: 600px;
+      width: 100%;
+      padding: 24px;
+      box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.8);
+    }
+    .modal-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 16px;
+      padding-bottom: 10px;
+      border-bottom: 1px solid var(--border);
+    }
+
+    /* Loading Spinner */
+    .spinner {
+      width: 16px;
+      height: 16px;
+      border: 2px solid rgba(255, 255, 255, 0.3);
+      border-top-color: white;
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+    }
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+
+    /* Table */
+    .table-responsive {
       overflow-x: auto;
-      max-height: 420px;
-      font-size: 0.8rem;
-      color: #38bdf8;
     }
-    .item-card {
-      background: #0b1120;
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.875rem;
+    }
+    th, td {
+      padding: 12px 14px;
+      text-align: left;
+      border-bottom: 1px solid var(--border);
+    }
+    th {
+      background: #090e1a;
+      color: var(--text-muted);
+      font-weight: 600;
+      text-transform: uppercase;
+      font-size: 0.75rem;
+      letter-spacing: 0.04em;
+    }
+    tr:hover td {
+      background: rgba(255, 255, 255, 0.02);
+    }
+
+    /* Raw JSON Viewer */
+    pre {
+      background: #060911;
       border: 1px solid var(--border);
       border-radius: 6px;
-      padding: 12px;
-      margin-bottom: 10px;
+      padding: 14px;
+      color: #38bdf8;
+      font-family: monospace;
+      font-size: 0.8rem;
+      overflow-x: auto;
+      max-height: 450px;
     }
-    .item-card h4 { color: #f1f5f9; margin-bottom: 4px; }
-    .item-card p { font-size: 0.85rem; color: var(--muted); margin-bottom: 6px; }
   </style>
 </head>
 <body>
 
+  <!-- Top App Navigation -->
   <header>
-    <div>
-      <h1>Mediator — Backend Test Console</h1>
-      <p style="color: var(--muted); font-size: 0.85rem;">Minimal harness for API inspection before Figma Make wireframe integration</p>
+    <a href="/" class="brand">
+      <div class="brand-icon">⚖️</div>
+      <div>
+        <div class="brand-title">Mediator — Backend Test Console</div>
+        <div class="brand-subtitle">AI Team Alignment Platform</div>
+      </div>
+    </a>
+
+    <div class="nav-stats">
+      <div id="connectionChip" class="status-chip">
+        <div class="pulse-dot"></div>
+        <span id="connectionText">Backend Connected</span>
+      </div>
+      <div id="modelChip" class="status-chip" style="color: var(--cyan); border-color: rgba(6,182,212,0.3)">
+        <span id="modelText">Gemini 2.5 Flash</span>
+      </div>
+      <div id="modeChip" class="status-chip" style="color: #818cf8; border-color: rgba(99,102,241,0.3)">
+        <span id="modeText">Mode: Live ADK / Mock</span>
+      </div>
+      <button onclick="pingBackend()" class="btn-secondary" style="padding: 5px 12px; font-size: 0.8rem;" title="Refresh backend status">
+        ↻ Ping
+      </button>
     </div>
-    <div id="connectionStatus" class="badge badge-offline">Connecting...</div>
   </header>
 
-  <div id="statusAlert" class="status-box"></div>
+  <!-- Project Switcher & Toolbar -->
+  <div class="project-bar">
+    <div class="project-selector-group">
+      <label for="projectSelector" style="margin: 0; white-space: nowrap;">Active Project:</label>
+      <select id="projectSelector" onchange="onProjectSelected(this.value)" style="flex: 1;">
+        <option value="">Loading project workspaces...</option>
+      </select>
+      <button onclick="openNewProjectModal()" class="btn-primary" style="white-space: nowrap;">+ New Project</button>
+    </div>
 
-  <!-- Config Bar -->
-  <div class="config-bar">
-    <label for="apiBaseUrl" style="margin: 0; font-weight: bold;">API Base URL:</label>
-    <input type="text" id="apiBaseUrl" value="http://localhost:8000" style="flex: 1;">
-    <button onclick="checkHealth()">Ping /health</button>
+    <div style="display: flex; gap: 8px;">
+      <button onclick="loadDemoScenario()" class="btn-warning" title="Load Alex, Sam, and Taylor intentional conflict scenario">
+        ⚡ 1-Click Demo Trio
+      </button>
+      <button id="runAnalysisTopBtn" onclick="runMultiAgentAnalysis()" class="btn-primary">
+        🚀 Run Multi-Agent Alignment
+      </button>
+    </div>
   </div>
 
-  <div class="grid">
-    <!-- Left Column: Actions & Forms -->
-    <div>
-      <!-- Current Project -->
-      <div class="panel">
-        <h2>1. Active Project</h2>
-        <div class="form-group">
-          <label>Selected Project ID:</label>
-          <input type="text" id="currentProjectId" placeholder="Create or select a project below" readonly>
+  <!-- Tab Switcher -->
+  <nav class="tabs-nav">
+    <button class="tab-btn active" onclick="switchTab('tab-dashboard')">📊 Alignment Intelligence</button>
+    <button class="tab-btn" onclick="switchTab('tab-perspectives')">✍️ Individual Perspectives</button>
+    <button class="tab-btn" onclick="switchTab('tab-team')">👥 Project & Team Roster</button>
+    <button class="tab-btn" onclick="switchTab('tab-decisions')">🤝 Binding Commitments (<span id="decisionsCount">0</span>)</button>
+    <button class="tab-btn" onclick="switchTab('tab-json')">🔍 API Debugger (JSON)</button>
+  </nav>
+
+  <!-- Notification Toast -->
+  <div id="toastAlert" class="toast"></div>
+
+  <!-- Main Content Area -->
+  <main>
+
+    <!-- ========================================== -->
+    <!-- TAB 1: ALIGNMENT INTELLIGENCE (DASHBOARD) -->
+    <!-- ========================================== -->
+    <div id="tab-dashboard" class="tab-content active">
+
+      <!-- Alignment Score Meter -->
+      <div class="meter-container">
+        <div class="meter-circle">
+          <span id="scoreNumber">--</span>
+          <span>SCORE</span>
         </div>
-        <div style="display: flex; gap: 8px;">
-          <button onclick="refreshProject()">Fetch Project</button>
-          <button onclick="listAllProjects()">List All Projects</button>
+        <div class="meter-info">
+          <div class="meter-title" id="scoreTitle">Multi-Agent Alignment Overview</div>
+          <p class="meter-summary" id="scoreSummary">
+            No analysis executed yet for this project. Submit perspectives from your teammates and click 
+            <strong>Run Multi-Agent Alignment</strong> to synthesize contradictions and compromise recommendations.
+          </p>
+          <div style="margin-top: 10px; font-size: 0.8rem; color: var(--text-dim);" id="executionMetadataText">
+            Execution mode: Awaiting pipeline trigger
+          </div>
+        </div>
+        <div>
+          <button id="runAnalysisMainBtn" onclick="runMultiAgentAnalysis()" class="btn-primary" style="padding: 12px 20px; font-size: 1rem;">
+            <span>Run Analysis</span>
+          </button>
         </div>
       </div>
 
-      <!-- Create Project -->
-      <div class="panel">
-        <h2>2. Create Project</h2>
-        <div class="form-group">
-          <label>Project Title:</label>
-          <input type="text" id="projTitle" value="Hackathon Release Sprint">
-        </div>
-        <div class="form-group">
-          <label>Description:</label>
-          <textarea id="projDesc" rows="2">Team alignment sprint</textarea>
-        </div>
-        <button onclick="createProject()">Create Project</button>
-      </div>
-
-      <!-- Add Member -->
-      <div class="panel">
-        <h2>3. Add Team Member</h2>
-        <div class="form-group">
-          <label>Member Name:</label>
-          <input type="text" id="memberName" value="Alex">
-        </div>
-        <div class="form-group">
-          <label>Role:</label>
-          <input type="text" id="memberRole" value="Frontend Lead">
-        </div>
-        <button onclick="addMember()">Add Member</button>
-      </div>
-
-      <!-- Submit Perspective -->
-      <div class="panel">
-        <h2>4. Submit Member Perspective</h2>
-        <div class="form-group">
-          <label>Member Name:</label>
-          <input type="text" id="respMemberName" value="Alex">
-        </div>
-        <div class="form-group">
-          <label>Perspective Statement:</label>
-          <textarea id="respText" rows="3">Our priority is completing the frontend by Friday.</textarea>
-        </div>
-        <div style="display: flex; gap: 8px;">
-          <button onclick="submitPerspective()">Submit Perspective</button>
-          <button onclick="loadSampleTrio()" class="btn-warning">Load Sample Trio (Alex/Sam/Taylor)</button>
+      <!-- Governance Notice -->
+      <div class="card" style="background: rgba(99, 102, 241, 0.05); border-color: rgba(99, 102, 241, 0.3); margin-bottom: 24px; padding: 14px 18px;">
+        <div style="display: flex; align-items: center; gap: 10px; font-size: 0.85rem; color: #c7d2fe;">
+          <span style="font-size: 1.1rem;">🔒</span>
+          <div>
+            <strong>Strict Governance Protocol:</strong> All AI-generated resolutions are strictly 
+            <em>proposals</em>. Responsibilities and deadlines are never automatically altered without 
+            explicit human sign-off via the <strong>Approve</strong> or <strong>Modify</strong> action.
+          </div>
         </div>
       </div>
 
-      <!-- Run Analysis -->
-      <div class="panel">
-        <h2>5. Multi-Agent Analysis</h2>
-        <p style="font-size: 0.85rem; color: var(--muted); margin-bottom: 12px;">
-          Triggers Google ADK: Perspective Agent &rarr; Conflict Agent &rarr; Resolution Agent
+      <!-- Dashboard Columns -->
+      <div class="grid-2">
+
+        <!-- Column A: Detected Misalignments & Conflicts -->
+        <div>
+          <div class="card">
+            <div class="card-header">
+              <div class="card-title">
+                <span>⚠️</span>
+                <span>Detected Misalignments & Conflicts</span>
+              </div>
+              <span id="conflictsBadge" class="badge badge-high">0 Found</span>
+            </div>
+            <p class="card-desc">Contradictory deadlines, unassigned ownership, and incompatible assumptions extracted from independent teammate statements.</p>
+            
+            <div id="conflictsList">
+              <div class="item-box" style="text-align: center; color: var(--text-muted); padding: 30px;">
+                No conflicts detected yet. Run analysis to compare perspectives.
+              </div>
+            </div>
+          </div>
+
+          <!-- Areas of Agreement & Compatible Differences -->
+          <div class="card">
+            <div class="card-header">
+              <div class="card-title">
+                <span>🤝</span>
+                <span>Areas of Agreement & Shared Goals</span>
+              </div>
+              <span id="agreementsBadge" class="badge badge-low">Compatible</span>
+            </div>
+            <p class="card-desc">Shared objectives, complementary functional focuses, and non-conflicting delivery assumptions.</p>
+            
+            <div id="agreementsList">
+              <div class="item-box" style="text-align: center; color: var(--text-muted); padding: 20px;">
+                Shared team goals will appear here following multi-agent synthesis.
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Column B: AI-Proposed Compromises & Solutions -->
+        <div>
+          <div class="card">
+            <div class="card-header">
+              <div class="card-title">
+                <span>💡</span>
+                <span>AI-Generated Proposed Resolutions</span>
+              </div>
+              <span id="resolutionsBadge" class="badge badge-proposed">Proposals</span>
+            </div>
+            <p class="card-desc">Pragmatic compromise proposals synthesized across contradictory constraints. Team members can vote to approve, reject, or modify.</p>
+            
+            <div id="resolutionsList">
+              <div class="item-box" style="text-align: center; color: var(--text-muted); padding: 30px;">
+                Resolution proposals will be synthesized once analysis is triggered.
+              </div>
+            </div>
+          </div>
+
+          <!-- Human Action Items -->
+          <div class="card">
+            <div class="card-header">
+              <div class="card-title">
+                <span>📋</span>
+                <span>Human Action Items for Consensus</span>
+              </div>
+            </div>
+            <div id="actionItemsList">
+              <ul style="margin-left: 20px; font-size: 0.85rem; color: var(--text-muted);">
+                <li>Collect individual perspectives from all project leads.</li>
+                <li>Review conflicting deadlines before setting external sprint dates.</li>
+                <li>Approve or modify compromise proposals to turn them into binding commitments.</li>
+              </ul>
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </div>
+
+
+    <!-- ========================================== -->
+    <!-- TAB 2: INDIVIDUAL PERSPECTIVES INGESTION -->
+    <!-- ========================================== -->
+    <div id="tab-perspectives" class="tab-content">
+      <div class="grid-2">
+
+        <!-- Form: Submit Individual Viewpoint -->
+        <div class="card">
+          <div class="card-header">
+            <div class="card-title">✍️ Submit Individual Perspective</div>
+          </div>
+          <p class="card-desc">
+            Teammates submit their assumptions independently without peer influence. The multi-agent pipeline extracts goals, deadlines, priorities, and ownership assumptions.
+          </p>
+
+          <form id="submitPerspectiveForm" onsubmit="handlePerspectiveSubmit(event)">
+            <div class="form-group">
+              <label for="memberSelect">Select Team Member:</label>
+              <select id="memberSelect" required>
+                <option value="">-- Choose member --</option>
+              </select>
+            </div>
+
+            <div class="form-group">
+              <label for="perspectiveText">Unstructured Perspective Statement:</label>
+              <textarea id="perspectiveText" rows="4" required placeholder="Example: Our priority is completing the frontend by Friday, and I believe Taylor owns deployment..."></textarea>
+              <div style="font-size: 0.75rem; color: var(--text-dim);">
+                💡 Tip: Mention specific days (e.g. Saturday, Sunday), priorities, or task ownership (e.g. "Taylor owns deployment").
+              </div>
+            </div>
+
+            <div class="form-group">
+              <label for="sourceInput">Submission Source:</label>
+              <input type="text" id="sourceInput" value="web_dashboard">
+            </div>
+
+            <div style="display: flex; gap: 10px; margin-top: 18px;">
+              <button type="submit" class="btn-primary" style="flex: 1;">
+                Submit Perspective
+              </button>
+              <button type="button" onclick="loadDemoScenario()" class="btn-warning">
+                Load Demo Trio
+              </button>
+            </div>
+          </form>
+        </div>
+
+        <!-- Ingested Submissions Feed -->
+        <div class="card">
+          <div class="card-header">
+            <div class="card-title">📥 Submitted Perspectives Feed</div>
+            <span id="responsesCountBadge" class="badge badge-low">0 Submissions</span>
+          </div>
+          <p class="card-desc">Verbatim viewpoints ingested for this project workspace.</p>
+          
+          <div id="responsesList" style="max-height: 520px; overflow-y: auto;">
+            <div class="item-box" style="text-align: center; color: var(--text-muted); padding: 30px;">
+              No perspectives submitted yet. Use the form on the left or click "Load Demo Trio".
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </div>
+
+
+    <!-- ========================================== -->
+    <!-- TAB 3: PROJECT & TEAM ROSTER -->
+    <!-- ========================================== -->
+    <div id="tab-team" class="tab-content">
+      <div class="grid-2">
+
+        <!-- Team Roster -->
+        <div class="card">
+          <div class="card-header">
+            <div class="card-title">👥 Project Team Roster</div>
+            <span id="membersCountBadge" class="badge badge-low">0 Members</span>
+          </div>
+          <p class="card-desc">Registered teammates for the active project workspace.</p>
+          
+          <div id="rosterList">
+            <div class="item-box" style="text-align: center; color: var(--text-muted); padding: 30px;">
+              No team members registered yet.
+            </div>
+          </div>
+        </div>
+
+        <!-- Add Member Form -->
+        <div class="card">
+          <div class="card-header">
+            <div class="card-title">➕ Add Team Member</div>
+          </div>
+          <p class="card-desc">Add a collaborator with their role to the active project.</p>
+
+          <form id="addMemberForm" onsubmit="handleAddMember(event)">
+            <div class="form-group">
+              <label for="newMemberName">Full Name / Alias:</label>
+              <input type="text" id="newMemberName" required placeholder="e.g. Alex, Sam, Taylor">
+            </div>
+
+            <div class="form-group">
+              <label for="newMemberRole">Role / Specialty:</label>
+              <input type="text" id="newMemberRole" placeholder="e.g. Frontend Lead, DevOps, Product Lead">
+              <div style="display: flex; gap: 6px; margin-top: 6px; flex-wrap: wrap;">
+                <span class="badge badge-low" style="cursor: pointer;" onclick="document.getElementById('newMemberRole').value='Frontend Lead'">Frontend</span>
+                <span class="badge badge-low" style="cursor: pointer;" onclick="document.getElementById('newMemberRole').value='Backend Lead'">Backend</span>
+                <span class="badge badge-low" style="cursor: pointer;" onclick="document.getElementById('newMemberRole').value='Product Lead'">Product Lead</span>
+                <span class="badge badge-low" style="cursor: pointer;" onclick="document.getElementById('newMemberRole').value='QA Specialist'">QA</span>
+                <span class="badge badge-low" style="cursor: pointer;" onclick="document.getElementById('newMemberRole').value='DevOps Engineer'">DevOps</span>
+              </div>
+            </div>
+
+            <div class="form-group">
+              <label for="newMemberEmail">Email (Optional):</label>
+              <input type="email" id="newMemberEmail" placeholder="alex@team.com">
+            </div>
+
+            <button type="submit" class="btn-primary" style="width: 100%; margin-top: 10px;">
+              Register Member
+            </button>
+          </form>
+        </div>
+
+      </div>
+    </div>
+
+
+    <!-- ========================================== -->
+    <!-- TAB 4: BINDING COMMITMENTS AUDIT TRAIL -->
+    <!-- ========================================== -->
+    <div id="tab-decisions" class="tab-content">
+      <div class="card">
+        <div class="card-header">
+          <div class="card-title">🤝 Confirmed Binding Commitments</div>
+          <button onclick="fetchDecisions()" class="btn-secondary" style="padding: 4px 10px; font-size: 0.8rem;">↻ Refresh</button>
+        </div>
+        <p class="card-desc">
+          Official commitments approved or negotiated by human team members. Unlike AI proposals, these items are binding project decisions that survive server restarts.
         </p>
-        <div style="display: flex; gap: 8px;">
-          <button onclick="triggerAnalysis()" class="btn-success">Run Multi-Agent Analysis</button>
-          <button onclick="getAlignmentReport()">View Latest Report</button>
+
+        <div class="table-responsive">
+          <table id="decisionsTable">
+            <thead>
+              <tr>
+                <th>Status</th>
+                <th>Resolution Ref</th>
+                <th>Official Binding Commitment Text</th>
+                <th>Signed Off By</th>
+                <th>Decided At</th>
+                <th>Notes</th>
+              </tr>
+            </thead>
+            <tbody id="decisionsTableBody">
+              <tr>
+                <td colspan="6" style="text-align: center; color: var(--text-muted); padding: 30px;">
+                  No decisions have been finalized yet. Review proposals on the <strong>Alignment Intelligence</strong> tab and click <em>Approve</em> or <em>Modify</em>.
+                </td>
+              </tr>
+            </tbody>
+          </table>
         </div>
       </div>
+    </div>
 
-      <!-- Human Decision -->
-      <div class="panel">
-        <h2>6. Human Decision Sign-off</h2>
+
+    <!-- ========================================== -->
+    <!-- TAB 5: RAW JSON INSPECTOR -->
+    <!-- ========================================== -->
+    <div id="tab-json" class="tab-content">
+      <div class="card">
+        <div class="card-header">
+          <div class="card-title">🔍 API Response Inspector</div>
+          <button onclick="copyJsonToClipboard()" class="btn-secondary" style="padding: 4px 10px; font-size: 0.8rem;">📋 Copy JSON</button>
+        </div>
+        <p class="card-desc">Complete structured Pydantic payload returned by FastAPI for the active project.</p>
+        <pre id="rawJsonViewer">// API response payloads will appear here in real-time...</pre>
+      </div>
+    </div>
+
+  </main>
+
+
+  <!-- ========================================== -->
+  <!-- MODALS -->
+  <!-- ========================================== -->
+
+  <!-- Modal: Create New Project -->
+  <div id="newProjectModal" class="modal-backdrop">
+    <div class="modal">
+      <div class="modal-header">
+        <h3 style="font-size: 1.15rem; font-weight: 700;">Create Project Workspace</h3>
+        <button onclick="closeModal('newProjectModal')" class="btn-secondary" style="padding: 4px 8px;">✕</button>
+      </div>
+      <form onsubmit="handleCreateProject(event)">
         <div class="form-group">
-          <label>Resolution ID (from proposals):</label>
-          <input type="text" id="decisionResId" value="RES-01">
+          <label for="createProjTitle">Project Title:</label>
+          <input type="text" id="createProjTitle" required placeholder="e.g. Q4 Hackathon MVP Release">
         </div>
         <div class="form-group">
-          <label>Action:</label>
-          <select id="decisionAction">
-            <option value="APPROVE">APPROVE (Accept proposal)</option>
-            <option value="REJECT">REJECT (Decline proposal)</option>
-            <option value="MODIFY">MODIFY (Custom commitment)</option>
+          <label for="createProjDesc">Description (Optional):</label>
+          <textarea id="createProjDesc" rows="3" placeholder="Goals, stakeholders, or sprint objectives..."></textarea>
+        </div>
+        <div style="display: flex; justify-content: flex-end; gap: 10px; margin-top: 18px;">
+          <button type="button" onclick="closeModal('newProjectModal')" class="btn-secondary">Cancel</button>
+          <button type="submit" class="btn-primary">Create Project</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Modal: Record Decision (Approve / Modify / Reject) -->
+  <div id="decisionModal" class="modal-backdrop">
+    <div class="modal">
+      <div class="modal-header">
+        <h3 id="modalDecisionTitle" style="font-size: 1.15rem; font-weight: 700;">Record Human Decision</h3>
+        <button onclick="closeModal('decisionModal')" class="btn-secondary" style="padding: 4px 8px;">✕</button>
+      </div>
+      <form onsubmit="handleRecordDecision(event)">
+        <input type="hidden" id="modalResId">
+        
+        <div class="form-group">
+          <label for="modalActionSelect">Action Decision:</label>
+          <select id="modalActionSelect" onchange="onDecisionActionChanged(this.value)" required>
+            <option value="APPROVE">APPROVE — Accept AI proposal as binding commitment</option>
+            <option value="MODIFY">MODIFY — Customize compromise text</option>
+            <option value="REJECT">REJECT — Decline proposed resolution</option>
           </select>
         </div>
-        <div class="form-group">
-          <label>Custom Commitment Text (Optional if APPROVE, Required if MODIFY):</label>
-          <textarea id="decisionCustomText" rows="2" placeholder="Agreed binding schedule..."></textarea>
-        </div>
-        <div class="form-group">
-          <label>Decided By (Your Name/Role):</label>
-          <input type="text" id="decidedBy" value="Sam (Product Lead)">
-        </div>
-        <div style="display: flex; gap: 8px;">
-          <button onclick="recordDecision()" class="btn-success">Record Decision</button>
-          <button onclick="getDecisions()">List Confirmed Decisions</button>
-        </div>
-      </div>
-    </div>
 
-    <!-- Right Column: Results & Raw JSON Viewer -->
-    <div>
-      <div class="panel">
-        <h2>Structured View: Conflicts & Proposals</h2>
-        <div id="formattedOutput">
-          <p style="color: var(--muted); font-size: 0.85rem;">No analysis triggered yet. Create a project and run analysis to view cards here.</p>
+        <div class="form-group" id="decisionTextGroup">
+          <label for="modalDecisionText">Binding Commitment Text:</label>
+          <textarea id="modalDecisionText" rows="3" placeholder="Enter agreed team commitment..."></textarea>
+          <div style="font-size: 0.75rem; color: var(--text-dim);">
+            Required for MODIFY; prefilled with recommended compromise for APPROVE.
+          </div>
         </div>
-      </div>
 
-      <div class="panel">
-        <h2>Raw JSON Response Viewer</h2>
-        <pre id="jsonViewer">// API response JSON will appear here...</pre>
-      </div>
+        <div class="form-group">
+          <label for="modalDecidedBy">Signed Off By (Your Name & Role):</label>
+          <input type="text" id="modalDecidedBy" required placeholder="e.g. Sam (Product Lead)">
+        </div>
+
+        <div class="form-group">
+          <label for="modalDecisionNotes">Meeting / Consensus Notes (Optional):</label>
+          <input type="text" id="modalDecisionNotes" placeholder="e.g. Unanimously agreed in sprint standup">
+        </div>
+
+        <div style="display: flex; justify-content: flex-end; gap: 10px; margin-top: 20px;">
+          <button type="button" onclick="closeModal('decisionModal')" class="btn-secondary">Cancel</button>
+          <button type="submit" id="modalSubmitBtn" class="btn-success">Confirm Sign-off</button>
+        </div>
+      </form>
     </div>
   </div>
 
+
+  <!-- ========================================== -->
+  <!-- FRONTEND SCRIPT LOGIC -->
+  <!-- ========================================== -->
   <script>
-    function getBaseUrl() {
-      return document.getElementById("apiBaseUrl").value.replace(/\/+$/, "");
+    // State
+    let currentProjectId = "";
+    let projectsList = [];
+    let currentAnalysisReport = null;
+    let currentActiveProposal = null;
+
+    const API_BASE = window.location.origin.includes("localhost") || window.location.origin.includes("127.0.0.1")
+      ? window.location.origin
+      : "http://localhost:8000";
+
+    // Toast Alert Helper
+    function showToast(msg, isError = false) {
+      const toast = document.getElementById("toastAlert");
+      toast.className = isError ? "toast toast-error" : "toast toast-success";
+      toast.textContent = (isError ? "✕ " : "✓ ") + msg;
+      toast.style.display = "block";
+      setTimeout(() => { toast.style.display = "none"; }, 6000);
     }
 
-    function setStatus(msg, isError = false) {
-      const alert = document.getElementById("statusAlert");
-      alert.className = isError ? "status-box status-error" : "status-box status-success";
-      alert.textContent = (isError ? "Error: " : "Success: ") + msg;
-      alert.style.display = "block";
-      setTimeout(() => { alert.style.display = "none"; }, 8000);
+    function setJsonViewer(data) {
+      document.getElementById("rawJsonViewer").textContent = JSON.stringify(data, null, 2);
     }
 
-    function displayJson(data) {
-      document.getElementById("jsonViewer").textContent = JSON.stringify(data, null, 2);
+    function copyJsonToClipboard() {
+      const text = document.getElementById("rawJsonViewer").textContent;
+      navigator.clipboard.writeText(text);
+      showToast("Copied JSON payload to clipboard!");
     }
 
-    async function checkHealth() {
-      const conn = document.getElementById("connectionStatus");
+    function switchTab(tabId) {
+      document.querySelectorAll(".tab-content").forEach(el => el.classList.remove("active"));
+      document.querySelectorAll(".tab-btn").forEach(el => el.classList.remove("active"));
+      const target = document.getElementById(tabId);
+      if (target) target.classList.add("active");
+      
+      const btn = Array.from(document.querySelectorAll(".tab-btn")).find(b => b.getAttribute("onclick").includes(tabId));
+      if (btn) btn.classList.add("active");
+    }
+
+    function openModal(id) {
+      const m = document.getElementById(id);
+      if (m) m.style.display = "flex";
+    }
+
+    function closeModal(id) {
+      const m = document.getElementById(id);
+      if (m) m.style.display = "none";
+    }
+
+    function openNewProjectModal() {
+      document.getElementById("createProjTitle").value = "";
+      document.getElementById("createProjDesc").value = "";
+      openModal("newProjectModal");
+    }
+
+    // Health Ping
+    async function pingBackend() {
       try {
-        const res = await fetch(`${getBaseUrl()}/health`);
+        const res = await fetch(`${API_BASE}/health`);
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const data = await res.json();
-        conn.className = "badge badge-online";
-        conn.textContent = `Online (${data.model} | Key: ${data.api_key_configured})`;
-        setStatus("Connected to backend /health successfully!");
-        displayJson(data);
+        
+        document.getElementById("connectionChip").style.borderColor = "rgba(16, 185, 129, 0.4)";
+        document.getElementById("connectionText").textContent = "Backend Online";
+        document.getElementById("modelText").textContent = data.model || "Gemini 2.5 Flash";
+        document.getElementById("modeText").textContent = data.api_key_configured ? "Mode: Live Gemini ADK" : "Mode: Deterministic Mock";
+        setJsonViewer(data);
+        showToast("Connected to FastAPI backend successfully!");
       } catch (err) {
-        conn.className = "badge badge-offline";
-        conn.textContent = "Offline";
-        setStatus(`Cannot reach ${getBaseUrl()}: ${err.message}`, true);
+        document.getElementById("connectionChip").style.borderColor = "rgba(239, 68, 68, 0.4)";
+        document.getElementById("connectionText").textContent = "Backend Offline";
+        showToast(`Cannot reach backend: ${err.message}`, true);
       }
     }
 
-    async function createProject() {
-      const title = document.getElementById("projTitle").value;
-      const description = document.getElementById("projDesc").value;
+    // Project Operations
+    async function fetchProjects() {
       try {
-        const res = await fetch(`${getBaseUrl()}/api/projects`, {
+        const res = await fetch(`${API_BASE}/api/projects`);
+        if (!res.ok) throw new Error(await res.text());
+        projectsList = await res.json();
+
+        const select = document.getElementById("projectSelector");
+        select.innerHTML = "";
+
+        if (projectsList.length === 0) {
+          select.innerHTML = `<option value="">No projects yet — create one!</option>`;
+          return;
+        }
+
+        projectsList.forEach(p => {
+          const opt = document.createElement("option");
+          opt.value = p.id;
+          opt.textContent = `${p.title} (${p.members ? p.members.length : 0} members)`;
+          select.appendChild(opt);
+        });
+
+        // Parse project_id from URL query params if present
+        const urlParams = new URLSearchParams(window.location.search);
+        const qProj = urlParams.get("project_id");
+        if (qProj && projectsList.some(p => p.id === qProj)) {
+          select.value = qProj;
+        } else if (!currentProjectId) {
+          select.value = projectsList[0].id;
+        } else {
+          select.value = currentProjectId;
+        }
+
+        onProjectSelected(select.value);
+      } catch (err) {
+        showToast(`Error fetching projects: ${err.message}`, true);
+      }
+    }
+
+    async function onProjectSelected(projectId) {
+      if (!projectId) return;
+      currentProjectId = projectId;
+
+      // Update URL query without reload
+      const newUrl = new URL(window.location);
+      newUrl.searchParams.set("project_id", projectId);
+      window.history.replaceState({}, "", newUrl);
+
+      await Promise.all([
+        refreshProjectRoster(),
+        fetchResponses(),
+        fetchLatestAlignment(),
+        fetchDecisions()
+      ]);
+    }
+
+    async function handleCreateProject(e) {
+      e.preventDefault();
+      const title = document.getElementById("createProjTitle").value.trim();
+      const description = document.getElementById("createProjDesc").value.trim();
+
+      try {
+        const res = await fetch(`${API_BASE}/api/projects`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ title, description })
         });
         const data = await res.json();
         if (!res.ok) throw new Error(data.detail || JSON.stringify(data));
-        document.getElementById("currentProjectId").value = data.id;
-        setStatus(`Created Project: ${data.title} (${data.id})`);
-        displayJson(data);
+
+        closeModal("newProjectModal");
+        showToast(`Created project: ${data.title}!`);
+        currentProjectId = data.id;
+        await fetchProjects();
       } catch (err) {
-        setStatus(err.message, true);
-        displayJson({ error: err.message });
+        showToast(err.message, true);
       }
     }
 
-    async function addMember() {
-      const projectId = document.getElementById("currentProjectId").value;
-      if (!projectId) return setStatus("Create or select a project first", true);
-      const name = document.getElementById("memberName").value;
-      const role = document.getElementById("memberRole").value;
+    async function refreshProjectRoster() {
+      if (!currentProjectId) return;
+      try {
+        const res = await fetch(`${API_BASE}/api/projects/${currentProjectId}`);
+        if (!res.ok) return;
+        const project = await res.json();
+        setJsonViewer(project);
+
+        const rosterEl = document.getElementById("rosterList");
+        const memberSelectEl = document.getElementById("memberSelect");
+        const badgeEl = document.getElementById("membersCountBadge");
+
+        const members = project.members || [];
+        badgeEl.textContent = `${members.length} Members`;
+
+        // Update member selection dropdown in perspectives form
+        memberSelectEl.innerHTML = `<option value="">-- Choose member --</option>`;
+        members.forEach(m => {
+          const opt = document.createElement("option");
+          opt.value = m.name;
+          opt.textContent = `${m.name} (${m.role || 'Member'})`;
+          memberSelectEl.appendChild(opt);
+        });
+
+        // Render roster cards
+        if (members.length === 0) {
+          rosterEl.innerHTML = `<div class="item-box" style="text-align: center; color: var(--text-muted); padding: 25px;">No team members registered yet. Add teammates using the form on the right.</div>`;
+        } else {
+          rosterEl.innerHTML = "";
+          members.forEach(m => {
+            const box = document.createElement("div");
+            box.className = "item-box";
+            box.innerHTML = `
+              <div class="item-box-header">
+                <strong style="color: var(--text); font-size: 1rem;">${m.name}</strong>
+                <span class="badge badge-low">${m.role || 'Contributor'}</span>
+              </div>
+              <div style="font-size: 0.8rem; color: var(--text-muted);">
+                ${m.email ? `✉️ ${m.email} &bull; ` : ''}Added: ${new Date(m.created_at).toLocaleDateString()}
+              </div>
+            `;
+            rosterEl.appendChild(box);
+          });
+        }
+      } catch (err) {
+        console.error("Error refreshing roster:", err);
+      }
+    }
+
+    async function handleAddMember(e) {
+      e.preventDefault();
+      if (!currentProjectId) return showToast("Create or select a project first", true);
+
+      const name = document.getElementById("newMemberName").value.trim();
+      const role = document.getElementById("newMemberRole").value.trim();
+      const email = document.getElementById("newMemberEmail").value.trim() || null;
 
       try {
-        const res = await fetch(`${getBaseUrl()}/api/projects/${projectId}/members`, {
+        const res = await fetch(`${API_BASE}/api/projects/${currentProjectId}/members`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ name, role })
+          body: JSON.stringify({ name, role, email })
         });
         const data = await res.json();
         if (!res.ok) throw new Error(data.detail || JSON.stringify(data));
-        setStatus(`Added Member: ${data.name}`);
-        displayJson(data);
+
+        document.getElementById("newMemberName").value = "";
+        document.getElementById("newMemberRole").value = "";
+        document.getElementById("newMemberEmail").value = "";
+
+        showToast(`Registered teammate: ${data.name}!`);
+        await refreshProjectRoster();
       } catch (err) {
-        setStatus(err.message, true);
-        displayJson({ error: err.message });
+        showToast(err.message, true);
       }
     }
 
-    async function submitPerspective() {
-      const projectId = document.getElementById("currentProjectId").value;
-      if (!projectId) return setStatus("Create or select a project first", true);
-      const member_name = document.getElementById("respMemberName").value;
-      const raw_text = document.getElementById("respText").value;
+    // Perspective Responses
+    async function fetchResponses() {
+      if (!currentProjectId) return;
+      try {
+        const res = await fetch(`${API_BASE}/api/projects/${currentProjectId}/responses`);
+        if (!res.ok) return;
+        const responses = await res.json();
+
+        document.getElementById("responsesCountBadge").textContent = `${responses.length} Submissions`;
+        const listEl = document.getElementById("responsesList");
+
+        if (responses.length === 0) {
+          listEl.innerHTML = `<div class="item-box" style="text-align: center; color: var(--text-muted); padding: 30px;">No perspectives submitted yet.</div>`;
+          return;
+        }
+
+        listEl.innerHTML = "";
+        responses.forEach(r => {
+          const item = document.createElement("div");
+          item.className = "item-box";
+          item.innerHTML = `
+            <div class="item-box-header">
+              <span style="font-weight: 700; color: var(--cyan);">👤 ${r.member_name}</span>
+              <span class="badge badge-low">${r.source}</span>
+            </div>
+            <p style="font-size: 0.9rem; color: #f1f5f9; margin-bottom: 6px;">"${r.raw_text}"</p>
+            <div style="font-size: 0.75rem; color: var(--text-dim);">
+              Submitted at: ${new Date(r.submitted_at).toLocaleTimeString()}
+            </div>
+          `;
+          listEl.appendChild(item);
+        });
+      } catch (err) {
+        console.error("Error fetching responses:", err);
+      }
+    }
+
+    async function handlePerspectiveSubmit(e) {
+      e.preventDefault();
+      if (!currentProjectId) return showToast("Select a project first", true);
+
+      const member_name = document.getElementById("memberSelect").value;
+      const raw_text = document.getElementById("perspectiveText").value.trim();
+      const source = document.getElementById("sourceInput").value.trim() || "web_dashboard";
+
+      if (!member_name) return showToast("Please choose a team member", true);
 
       try {
-        const res = await fetch(`${getBaseUrl()}/api/projects/${projectId}/responses`, {
+        const res = await fetch(`${API_BASE}/api/projects/${currentProjectId}/responses`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ member_name, raw_text })
+          body: JSON.stringify({ member_name, raw_text, source })
         });
         const data = await res.json();
         if (!res.ok) throw new Error(data.detail || JSON.stringify(data));
-        setStatus(`Submitted perspective from ${data.member_name}`);
-        displayJson(data);
+
+        document.getElementById("perspectiveText").value = "";
+        showToast(`Submitted viewpoint for ${data.member_name}!`);
+        await fetchResponses();
       } catch (err) {
-        setStatus(err.message, true);
-        displayJson({ error: err.message });
+        showToast(err.message, true);
       }
     }
 
-    async function loadSampleTrio() {
-      const projectId = document.getElementById("currentProjectId").value;
-      if (!projectId) return setStatus("Create or select a project first", true);
+    // 1-Click Demo Scenario Loader
+    async function loadDemoScenario() {
+      if (!currentProjectId) return showToast("Select a project first", true);
+      showToast("Loading 3 intentionally conflicting teammate statements...");
 
-      const trio = [
-        { member_name: "Alex", raw_text: "Our priority is completing the frontend by Friday." },
-        { member_name: "Sam", raw_text: "I thought we agreed to launch the entire application on Thursday." },
-        { member_name: "Taylor", raw_text: "I think we should complete testing before launching anything." }
+      const demoTrio = [
+        {
+          name: "Alex",
+          role: "Frontend Lead",
+          text: "The project deadline is Saturday and I believe Taylor owns deployment."
+        },
+        {
+          name: "Sam",
+          role: "Product Lead",
+          text: "The project deadline is Sunday and we need full feature completion before launch."
+        },
+        {
+          name: "Taylor",
+          role: "QA & Reliability",
+          text: "I believe Alex owns deployment, and we must complete thorough testing before launching anything."
+        }
       ];
 
-      for (const item of trio) {
-        await fetch(`${getBaseUrl()}/api/projects/${projectId}/responses`, {
+      for (const item of demoTrio) {
+        // Register member if not exists
+        await fetch(`${API_BASE}/api/projects/${currentProjectId}/members`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(item)
+          body: JSON.stringify({ name: item.name, role: item.role })
+        }).catch(() => {});
+
+        // Submit response
+        await fetch(`${API_BASE}/api/projects/${currentProjectId}/responses`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ member_name: item.name, raw_text: item.text, source: "demo_scenario" })
         });
       }
-      setStatus("Loaded sample statements for Alex, Sam, and Taylor!");
-      const res = await fetch(`${getBaseUrl()}/api/projects/${projectId}/responses`);
-      const all = await res.json();
-      displayJson(all);
+
+      showToast("Successfully loaded perspectives for Alex, Sam, and Taylor!");
+      await refreshProjectRoster();
+      await fetchResponses();
+      switchTab("tab-perspectives");
     }
 
-    async function triggerAnalysis() {
-      const projectId = document.getElementById("currentProjectId").value;
-      if (!projectId) return setStatus("Create or select a project first", true);
-      setStatus("Triggering multi-agent analysis (Perspective -> Conflict -> Resolution)...");
+    // Multi-Agent Analysis Execution
+    async function runMultiAgentAnalysis() {
+      if (!currentProjectId) return showToast("Select a project first", true);
+      
+      const btnMain = document.getElementById("runAnalysisMainBtn");
+      const btnTop = document.getElementById("runAnalysisTopBtn");
+      btnMain.disabled = true;
+      btnTop.disabled = true;
+      btnMain.innerHTML = `<div class="spinner"></div> Running Agents...`;
+      btnTop.innerHTML = `<div class="spinner"></div> Running...`;
+
+      showToast("Executing Google ADK Multi-Agent Workflow (Perspective -> Conflict -> Resolution)...");
 
       try {
-        const res = await fetch(`${getBaseUrl()}/api/projects/${projectId}/analyze`, {
+        const res = await fetch(`${API_BASE}/api/projects/${currentProjectId}/analyze`, {
           method: "POST"
         });
         const data = await res.json();
         if (!res.ok) throw new Error(data.detail || JSON.stringify(data));
-        setStatus(`Analysis completed in ${data.execution_metadata.duration_seconds}s! Mode: ${data.execution_mode}`);
-        displayJson(data);
-        renderStructuredReport(data.synthesis_output, data.conflicts_output);
+
+        currentAnalysisReport = data;
+        setJsonViewer(data);
+        renderAlignmentReport(data);
+
+        showToast(`Multi-Agent alignment completed in ${data.execution_metadata.duration_seconds}s! Mode: ${data.execution_mode}`);
+        switchTab("tab-dashboard");
       } catch (err) {
-        setStatus(err.message, true);
-        displayJson({ error: err.message });
+        showToast(`Analysis failed: ${err.message}`, true);
+        setJsonViewer({ error: err.message });
+      } finally {
+        btnMain.disabled = false;
+        btnTop.disabled = false;
+        btnMain.innerHTML = `<span>Run Analysis</span>`;
+        btnTop.innerHTML = `🚀 Run Multi-Agent Alignment`;
       }
     }
 
-    async function getAlignmentReport() {
-      const projectId = document.getElementById("currentProjectId").value;
-      if (!projectId) return setStatus("Create or select a project first", true);
+    async function fetchLatestAlignment() {
+      if (!currentProjectId) return;
+      try {
+        const res = await fetch(`${API_BASE}/api/projects/${currentProjectId}/alignment`);
+        if (!res.ok) return;
+        const synth = await res.json();
+        renderSynthesisOnly(synth);
+      } catch (err) {
+        // No report yet is normal
+      }
+    }
+
+    function renderSynthesisOnly(synth) {
+      document.getElementById("scoreNumber").textContent = Math.round(synth.alignment_score);
+      document.getElementById("scoreTitle").textContent = `Alignment Score: ${synth.alignment_score} / 100`;
+      document.getElementById("scoreSummary").textContent = synth.executive_summary;
+      
+      // Render resolutions
+      renderResolutions(synth.proposed_resolutions || []);
+      renderActionItems(synth.human_action_items || []);
+    }
+
+    function renderAlignmentReport(data) {
+      const synth = data.synthesis_output;
+      const conflictsOut = data.conflicts_output;
+
+      // Meter Update
+      const score = Math.round(synth.alignment_score);
+      const scoreCircle = document.querySelector(".meter-circle");
+      document.getElementById("scoreNumber").textContent = score;
+
+      if (score >= 80) {
+        scoreCircle.style.borderColor = "var(--success)";
+        scoreCircle.style.boxShadow = "0 0 20px rgba(16, 185, 129, 0.4)";
+      } else if (score >= 50) {
+        scoreCircle.style.borderColor = "var(--warning)";
+        scoreCircle.style.boxShadow = "0 0 20px rgba(245, 158, 11, 0.4)";
+      } else {
+        scoreCircle.style.borderColor = "var(--danger)";
+        scoreCircle.style.boxShadow = "0 0 20px rgba(239, 68, 68, 0.4)";
+      }
+
+      document.getElementById("scoreTitle").textContent = `Alignment Score: ${synth.alignment_score} / 100`;
+      document.getElementById("scoreSummary").textContent = synth.executive_summary;
+      document.getElementById("executionMetadataText").textContent = 
+        `Mode: ${data.execution_mode} | Duration: ${data.execution_metadata.duration_seconds}s | Model: ${data.execution_metadata.model}`;
+
+      // Conflicts
+      renderConflicts(conflictsOut.conflicts || []);
+      
+      // Agreements
+      renderAgreements(conflictsOut.compatible_differences || [], synth.key_findings || []);
+
+      // Proposed Resolutions
+      renderResolutions(synth.proposed_resolutions || []);
+
+      // Action items
+      renderActionItems(synth.human_action_items || []);
+    }
+
+    function renderConflicts(conflicts) {
+      const badge = document.getElementById("conflictsBadge");
+      const listEl = document.getElementById("conflictsList");
+      badge.textContent = `${conflicts.length} Found`;
+
+      if (conflicts.length === 0) {
+        badge.className = "badge badge-approved";
+        listEl.innerHTML = `<div class="item-box" style="text-align: center; color: var(--success); padding: 25px;">✓ No blocking conflicts or deadline contradictions detected!</div>`;
+        return;
+      }
+
+      badge.className = "badge badge-high";
+      listEl.innerHTML = "";
+
+      conflicts.forEach(c => {
+        const item = document.createElement("div");
+        item.className = "item-box";
+        
+        let sevClass = "badge-high";
+        if (c.severity === "MEDIUM") sevClass = "badge-medium";
+        if (c.severity === "LOW") sevClass = "badge-low";
+
+        // Evidence HTML
+        let evidenceHtml = "";
+        if (c.evidence && c.evidence.length > 0) {
+          evidenceHtml = c.evidence.map(ev => `
+            <div class="evidence-block">
+              <div class="evidence-quote">"${ev.quote}"</div>
+              <div class="evidence-note"><strong>${ev.member_name}</strong>: ${ev.interpretation}</div>
+            </div>
+          `).join("");
+        }
+
+        item.innerHTML = `
+          <div class="item-box-header">
+            <span class="badge ${sevClass}">${c.conflict_id} &bull; ${c.severity}</span>
+            <span class="badge badge-low">${c.conflict_type.replace(/_/g, ' ')}</span>
+          </div>
+          <h4 style="color: #f87171; font-size: 1rem; margin-bottom: 6px;">${c.title}</h4>
+          <p style="font-size: 0.85rem; color: #cbd5e1; margin-bottom: 8px;">${c.severity_reasoning}</p>
+          
+          <div style="font-size: 0.8rem; color: var(--text-muted); margin-bottom: 6px;">
+            <strong>Parties Involved:</strong> ${c.parties_involved.join(", ")}
+          </div>
+
+          <div style="margin-top: 8px;">
+            <strong style="font-size: 0.75rem; text-transform: uppercase; color: var(--text-dim);">Supporting Evidence:</strong>
+            ${evidenceHtml}
+          </div>
+
+          <div style="margin-top: 10px; font-size: 0.8rem; color: #fca5a5; background: rgba(239, 68, 68, 0.08); padding: 6px 10px; border-radius: 4px;">
+            <strong>Impact:</strong> ${c.impact_description}
+          </div>
+        `;
+        listEl.appendChild(item);
+      });
+    }
+
+    function renderAgreements(compatibleDiffs, keyFindings) {
+      const listEl = document.getElementById("agreementsList");
+      if (compatibleDiffs.length === 0 && keyFindings.length === 0) {
+        listEl.innerHTML = `<div class="item-box" style="text-align: center; color: var(--text-muted); padding: 20px;">No compatible areas extracted.</div>`;
+        return;
+      }
+
+      listEl.innerHTML = "";
+      compatibleDiffs.forEach(cd => {
+        const item = document.createElement("div");
+        item.className = "item-box";
+        item.style.borderLeft = "3px solid var(--success)";
+        item.innerHTML = `
+          <div style="display: flex; gap: 8px; font-size: 0.875rem; color: #d1fae5;">
+            <span>✓</span>
+            <div>${cd}</div>
+          </div>
+        `;
+        listEl.appendChild(item);
+      });
+    }
+
+    function renderResolutions(resolutions) {
+      const listEl = document.getElementById("resolutionsList");
+      const badge = document.getElementById("resolutionsBadge");
+      badge.textContent = `${resolutions.length} Proposed`;
+
+      if (resolutions.length === 0) {
+        listEl.innerHTML = `<div class="item-box" style="text-align: center; color: var(--text-muted); padding: 25px;">No active proposals.</div>`;
+        return;
+      }
+
+      listEl.innerHTML = "";
+      resolutions.forEach(r => {
+        const item = document.createElement("div");
+        item.className = "item-box";
+
+        // Questions HTML
+        let qHtml = "";
+        if (r.unresolved_questions_for_team && r.unresolved_questions_for_team.length > 0) {
+          qHtml = `
+            <div class="question-list">
+              <strong style="font-size: 0.75rem; color: #f59e0b; text-transform: uppercase;">Open Questions for Team Consensus:</strong>
+              <ul style="margin-top: 4px;">
+                ${r.unresolved_questions_for_team.map(q => `<li>${q}</li>`).join("")}
+              </ul>
+            </div>
+          `;
+        }
+
+        // Alternative Options HTML
+        let optHtml = "";
+        if (r.alternative_options && r.alternative_options.length > 0) {
+          optHtml = `
+            <div style="margin-top: 10px;">
+              <strong style="font-size: 0.75rem; text-transform: uppercase; color: var(--text-dim);">Alternative Approaches:</strong>
+              <div style="display: flex; flex-direction: column; gap: 6px; margin-top: 4px;">
+                ${r.alternative_options.map(opt => `
+                  <div style="background: rgba(0,0,0,0.3); border: 1px solid var(--border); border-radius: 4px; padding: 6px 10px; font-size: 0.8rem;">
+                    <strong>[${opt.option_id}] ${opt.title}</strong>: ${opt.description}
+                  </div>
+                `).join("")}
+              </div>
+            </div>
+          `;
+        }
+
+        item.innerHTML = `
+          <div class="item-box-header">
+            <span class="badge badge-proposed">[${r.resolution_id}] PROPOSED</span>
+            <span style="font-size: 0.8rem; color: var(--text-muted);">For ${r.conflict_title}</span>
+          </div>
+
+          <h4 style="color: #a5b4fc; font-size: 1rem; margin-bottom: 6px;">${r.recommended_solution}</h4>
+          <p style="font-size: 0.85rem; color: #cbd5e1; margin-bottom: 8px;"><em>Rationale:</em> ${r.reasoning}</p>
+
+          <div style="font-size: 0.8rem; color: var(--text-muted);">
+            <strong>Impacted Members:</strong> ${r.impacted_members.join(", ")}
+          </div>
+
+          ${qHtml}
+          ${optHtml}
+
+          <!-- Decision Action Buttons -->
+          <div style="display: flex; gap: 8px; margin-top: 14px; padding-top: 10px; border-top: 1px solid var(--border); flex-wrap: wrap;">
+            <button onclick="promptDecision('${r.resolution_id}', 'APPROVE', \`${escapeHtml(r.recommended_solution)}\`)" class="btn-success" style="flex: 1; padding: 6px 12px; font-size: 0.8rem;">
+              ✓ Approve Proposal
+            </button>
+            <button onclick="promptDecision('${r.resolution_id}', 'MODIFY', \`${escapeHtml(r.recommended_solution)}\`)" class="btn-warning" style="flex: 1; padding: 6px 12px; font-size: 0.8rem;">
+              ✎ Modify & Commit
+            </button>
+            <button onclick="promptDecision('${r.resolution_id}', 'REJECT', \`${escapeHtml(r.recommended_solution)}\`)" class="btn-danger" style="padding: 6px 12px; font-size: 0.8rem;">
+              ✕ Reject
+            </button>
+          </div>
+        `;
+        listEl.appendChild(item);
+      });
+    }
+
+    function renderActionItems(actionItems) {
+      const listEl = document.getElementById("actionItemsList");
+      if (actionItems.length === 0) return;
+      listEl.innerHTML = `<ul style="margin-left: 20px; font-size: 0.85rem; color: #cbd5e1;">${actionItems.map(ai => `<li style="margin-bottom: 6px;">${ai}</li>`).join("")}</ul>`;
+    }
+
+    function escapeHtml(str) {
+      if (!str) return "";
+      return str.replace(/"/g, '&quot;').replace(/'/g, "\\'").replace(/\n/g, ' ');
+    }
+
+    // Decisions & Commitments
+    function promptDecision(resId, action, prefillText) {
+      document.getElementById("modalResId").value = resId;
+      document.getElementById("modalActionSelect").value = action;
+      document.getElementById("modalDecisionText").value = prefillText;
+      document.getElementById("modalDecisionTitle").textContent = `Record Decision for [${resId}]`;
+      
+      onDecisionActionChanged(action);
+      openModal("decisionModal");
+    }
+
+    function onDecisionActionChanged(action) {
+      const textGroup = document.getElementById("decisionTextGroup");
+      const submitBtn = document.getElementById("modalSubmitBtn");
+
+      if (action === "REJECT") {
+        textGroup.style.display = "none";
+        submitBtn.className = "btn-danger";
+        submitBtn.textContent = "Confirm Rejection";
+      } else if (action === "MODIFY") {
+        textGroup.style.display = "flex";
+        submitBtn.className = "btn-warning";
+        submitBtn.textContent = "Record Modified Commitment";
+      } else {
+        textGroup.style.display = "flex";
+        submitBtn.className = "btn-success";
+        submitBtn.textContent = "Approve Binding Commitment";
+      }
+    }
+
+    async function handleRecordDecision(e) {
+      e.preventDefault();
+      if (!currentProjectId) return showToast("Select a project first", true);
+
+      const resolution_id = document.getElementById("modalResId").value;
+      const action = document.getElementById("modalActionSelect").value;
+      const decision_text = document.getElementById("modalDecisionText").value.trim() || null;
+      const decided_by = document.getElementById("modalDecidedBy").value.trim();
+      const notes = document.getElementById("modalDecisionNotes").value.trim() || null;
 
       try {
-        const res = await fetch(`${getBaseUrl()}/api/projects/${projectId}/alignment`);
-        const data = await res.json();
-        if (!res.ok) throw new Error(data.detail || JSON.stringify(data));
-        setStatus(`Retrieved alignment report for ${projectId}`);
-        displayJson(data);
-        renderStructuredReport(data, null);
-      } catch (err) {
-        setStatus(err.message, true);
-        displayJson({ error: err.message });
-      }
-    }
-
-    function renderStructuredReport(synth, conflictsOut) {
-      const container = document.getElementById("formattedOutput");
-      container.innerHTML = "";
-
-      const scoreCard = document.createElement("div");
-      scoreCard.className = "item-card";
-      scoreCard.innerHTML = `
-        <h4>Alignment Score: ${synth.alignment_score} / 100.0</h4>
-        <p>${synth.executive_summary}</p>
-        <p style="color: var(--warning); font-size: 0.75rem;"><strong>Governance:</strong> ${synth.disclaimer}</p>
-      `;
-      container.appendChild(scoreCard);
-
-      if (conflictsOut && conflictsOut.conflicts) {
-        conflictsOut.conflicts.forEach(c => {
-          const cCard = document.createElement("div");
-          cCard.className = "item-card";
-          cCard.innerHTML = `
-            <h4 style="color: var(--danger)">[${c.conflict_id}] ${c.title}</h4>
-            <p><strong>Severity:</strong> ${c.severity} | <strong>Parties:</strong> ${c.parties_involved.join(", ")}</p>
-            <p>${c.severity_reasoning}</p>
-          `;
-          container.appendChild(cCard);
-        });
-      }
-
-      if (synth.proposed_resolutions) {
-        synth.proposed_resolutions.forEach(r => {
-          const rCard = document.createElement("div");
-          rCard.className = "item-card";
-          rCard.innerHTML = `
-            <h4 style="color: var(--success)">[${r.resolution_id}] ${r.conflict_title}</h4>
-            <p><strong>Recommended Solution:</strong> ${r.recommended_solution}</p>
-            <p><strong>Status:</strong> <span class="badge" style="background:#854d0e; color:#fef08a">${r.status}</span> (Human approval needed)</p>
-            <p><strong>Impacted:</strong> ${r.impacted_members.join(", ")}</p>
-            <button onclick="document.getElementById('decisionResId').value='${r.resolution_id}'" style="padding:4px 8px; font-size:0.75rem;">Select for Decision</button>
-          `;
-          container.appendChild(rCard);
-        });
-      }
-    }
-
-    async function recordDecision() {
-      const projectId = document.getElementById("currentProjectId").value;
-      if (!projectId) return setStatus("Create or select a project first", true);
-      const resolution_id = document.getElementById("decisionResId").value;
-      const action = document.getElementById("decisionAction").value;
-      const decision_text = document.getElementById("decisionCustomText").value || null;
-      const decided_by = document.getElementById("decidedBy").value;
-
-      try {
-        const res = await fetch(`${getBaseUrl()}/api/projects/${projectId}/decisions`, {
+        const res = await fetch(`${API_BASE}/api/projects/${currentProjectId}/decisions`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ resolution_id, action, decision_text, decided_by })
+          body: JSON.stringify({ resolution_id, action, decision_text, decided_by, notes })
         });
         const data = await res.json();
         if (!res.ok) throw new Error(data.detail || JSON.stringify(data));
-        setStatus(`Recorded decision for ${data.resolution_id}! Status: ${data.status}`);
-        displayJson(data);
+
+        closeModal("decisionModal");
+        showToast(`Recorded binding decision for ${data.resolution_id}! Status: ${data.status}`);
+        setJsonViewer(data);
+        await fetchDecisions();
+        switchTab("tab-decisions");
       } catch (err) {
-        setStatus(err.message, true);
-        displayJson({ error: err.message });
+        showToast(err.message, true);
       }
     }
 
-    async function getDecisions() {
-      const projectId = document.getElementById("currentProjectId").value;
-      if (!projectId) return setStatus("Create or select a project first", true);
-
+    async function fetchDecisions() {
+      if (!currentProjectId) return;
       try {
-        const res = await fetch(`${getBaseUrl()}/api/projects/${projectId}/decisions`);
-        const data = await res.json();
-        if (!res.ok) throw new Error(data.detail || JSON.stringify(data));
-        setStatus(`Fetched ${data.length} confirmed decision(s)`);
-        displayJson(data);
-      } catch (err) {
-        setStatus(err.message, true);
-        displayJson({ error: err.message });
-      }
-    }
+        const res = await fetch(`${API_BASE}/api/projects/${currentProjectId}/decisions`);
+        if (!res.ok) return;
+        const decisions = await res.json();
 
-    async function listAllProjects() {
-      try {
-        const res = await fetch(`${getBaseUrl()}/api/projects`);
-        const data = await res.json();
-        if (!res.ok) throw new Error(data.detail || JSON.stringify(data));
-        setStatus(`Retrieved ${data.length} project(s)`);
-        displayJson(data);
-        if (data.length > 0 && !document.getElementById("currentProjectId").value) {
-          document.getElementById("currentProjectId").value = data[0].id;
+        document.getElementById("decisionsCount").textContent = decisions.length;
+        const bodyEl = document.getElementById("decisionsTableBody");
+
+        if (decisions.length === 0) {
+          bodyEl.innerHTML = `<tr><td colspan="6" style="text-align: center; color: var(--text-muted); padding: 30px;">No decisions have been finalized yet. Review proposals on the <strong>Alignment Intelligence</strong> tab.</td></tr>`;
+          return;
         }
+
+        bodyEl.innerHTML = "";
+        decisions.forEach(d => {
+          let badgeClass = "badge-approved";
+          if (d.status === "MODIFIED") badgeClass = "badge-modified";
+          if (d.status === "REJECTED") badgeClass = "badge-rejected";
+
+          const tr = document.createElement("tr");
+          tr.innerHTML = `
+            <td><span class="badge ${badgeClass}">${d.status}</span></td>
+            <td><strong>${d.resolution_id}</strong></td>
+            <td style="color: #f1f5f9;">${d.decision_text}</td>
+            <td>${d.decided_by}</td>
+            <td style="color: var(--text-muted); font-size: 0.8rem;">${new Date(d.decided_at).toLocaleString()}</td>
+            <td style="color: var(--text-dim);">${d.notes || '—'}</td>
+          `;
+          bodyEl.appendChild(tr);
+        });
       } catch (err) {
-        setStatus(err.message, true);
-        displayJson({ error: err.message });
+        console.error("Error fetching decisions:", err);
       }
     }
 
-    async function refreshProject() {
-      const projectId = document.getElementById("currentProjectId").value;
-      if (!projectId) return setStatus("Enter or select a Project ID first", true);
-      try {
-        const res = await fetch(`${getBaseUrl()}/api/projects/${projectId}`);
-        const data = await res.json();
-        if (!res.ok) throw new Error(data.detail || JSON.stringify(data));
-        setStatus(`Loaded Project: ${data.title}`);
-        displayJson(data);
-      } catch (err) {
-        setStatus(err.message, true);
-        displayJson({ error: err.message });
-      }
-    }
-
-    // Auto-ping on load
-    window.addEventListener("DOMContentLoaded", () => {
-      document.getElementById("apiBaseUrl").value = window.location.origin.includes("localhost") || window.location.origin.includes("127.0.0.1") 
-        ? window.location.origin 
-        : "http://localhost:8000";
-      checkHealth();
+    // Initialize on page load
+    window.addEventListener("DOMContentLoaded", async () => {
+      await pingBackend();
+      await fetchProjects();
     });
   </script>
 </body>

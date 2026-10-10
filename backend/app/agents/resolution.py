@@ -72,6 +72,7 @@ class ResolutionSynthesisService:
     def __init__(self, client: Optional[Client] = None):
         self.adk_agent = create_resolution_adk_agent()
         self.client = client
+        self.last_execution_mode: str = "MOCK_DETERMINISTIC"
         if self.client is None and settings.active_api_key:
             self.client = Client(api_key=settings.active_api_key)
 
@@ -92,6 +93,7 @@ class ResolutionSynthesisService:
 
         # If mock mode is active or no Gemini API key is configured, run generalized deterministic synthesis
         if not settings.is_live_gemini_available:
+            self.last_execution_mode = "MOCK_DETERMINISTIC"
             logger.info("Resolution Synthesis running in deterministic mode (no live Gemini key or mock enabled)")
             return self._mock_synthesize(project_id, perspectives, conflicts)
 
@@ -130,6 +132,7 @@ class ResolutionSynthesisService:
                     report.project_id = project_id
                     for res in report.proposed_resolutions:
                         res.status = "PROPOSED"
+                    self.last_execution_mode = "LIVE_GEMINI"
                     return report
 
             # Direct fallback if ADK runner stream is empty
@@ -151,13 +154,15 @@ class ResolutionSynthesisService:
                 # Enforce safety invariant: status must always be PROPOSED
                 for res in report.proposed_resolutions:
                     res.status = "PROPOSED"
+                self.last_execution_mode = "LIVE_GEMINI"
                 return report
             else:
                 raise ValueError("Empty response received from Gemini model.")
         except Exception as e:
             logger.error("Error executing Google ADK / Gemini for Resolution Synthesis: %s", e)
             if settings.app_env == "development" or settings.mock_llm:
-                logger.warning("Falling back to deterministic synthesis after error.")
+                self.last_execution_mode = f"MOCK_FALLBACK ({type(e).__name__})"
+                logger.warning(f"Falling back to deterministic synthesis after error: {e}")
                 return self._mock_synthesize(project_id, perspectives, conflicts)
             raise
 
@@ -256,6 +261,52 @@ class ResolutionSynthesisService:
                         unresolved_questions_for_team=[
                             "What are the minimum acceptance test criteria required for release sign-off?",
                             "Who holds final decision authority to approve or block the release based on test outcomes?",
+                        ],
+                        status="PROPOSED",
+                    )
+                )
+                res_counter += 1
+
+            elif conflict.conflict_type.value == "RESPONSIBILITY_OVERLAP_OR_GAP":
+                first_party = conflict.parties_involved[0] if conflict.parties_involved else "Lead"
+                second_party = conflict.parties_involved[1] if len(conflict.parties_involved) > 1 else "Reviewer"
+                proposed_resolutions.append(
+                    ProposedResolution(
+                        resolution_id=f"RES-{res_counter:02d}",
+                        conflict_id=conflict.conflict_id,
+                        conflict_title=conflict.title,
+                        recommended_solution=(
+                            f"Establish explicit single-owner accountability between {parties}: "
+                            f"Formally designate {first_party} as primary deliverable owner for execution, "
+                            f"with {second_party} serving as secondary reviewer and verification backup."
+                        ),
+                        reasoning=(
+                            f"Identified conflicting ownership expectations across {parties}. "
+                            "Having multiple assumptions of ownership creates execution gaps where critical tasks are dropped. "
+                            "A single accountable owner with a secondary peer reviewer balances delivery speed and quality."
+                        ),
+                        alternative_options=[
+                            ResolutionOption(
+                                option_id=f"OPT-{res_counter}A",
+                                title=f"Designate {first_party} as Primary Owner with {second_party} as Reviewer",
+                                description=f"{first_party} leads hands-on implementation and deployment while {second_party} conducts pre-release review.",
+                                pros=["Clear single-threaded ownership", "Reduces ambiguity"],
+                                cons=[f"Concentrates workload on {first_party}"],
+                                compromise_notes=f"Maintains {second_party}'s visibility through mandatory review checkpoints.",
+                            ),
+                            ResolutionOption(
+                                option_id=f"OPT-{res_counter}B",
+                                title="Split Scope: Automated Pipeline vs Production Release",
+                                description="Divide responsibilities into configuration/CI setup vs production environment deployment execution.",
+                                pros=["Shared engagement", "Prevents single-point dependency"],
+                                cons=["Requires explicit handoff interface"],
+                                compromise_notes=f"Allows both {first_party} and {second_party} to contribute distinct technical expertise.",
+                            ),
+                        ],
+                        impacted_members=conflict.parties_involved,
+                        unresolved_questions_for_team=[
+                            f"Between {parties}, who has direct admin access and production credentials?",
+                            "Can the team agree on a RACI matrix (Responsible, Accountable, Consulted, Informed) for release milestones?",
                         ],
                         status="PROPOSED",
                     )

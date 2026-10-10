@@ -1,8 +1,6 @@
-# AI Team Alignment Platform — Backend & Multi-Agent System
+# AI Team Alignment Platform — Backend, Multi-Agent System & Slack Bot
 
-An AI-powered team alignment backend built for hackathons and collaborative development. The platform acts as an **AI teammate** that surfaces hidden misalignments, compares teammate perspectives, identifies deadline contradictions, detects unbudgeted dependencies, and synthesizes pragmatic compromises — **while strictly preserving human authority over decisions**.
-
-> **Note**: This repository focuses exclusively on the backend and multi-agent AI functionality. The frontend will be built separately (e.g. using Figma Make) and connected via the REST API.
+An AI-powered team alignment backend built for hackathons and collaborative development. The platform acts as an **AI teammate** that surfaces hidden misalignments, compares teammate perspectives, identifies deadline contradictions, detects unbudgeted dependencies, clarifies role ownership gaps, and synthesizes pragmatic compromises — **while strictly preserving human authority over decisions**.
 
 ---
 
@@ -12,9 +10,10 @@ An AI-powered team alignment backend built for hackathons and collaborative deve
 - **Multi-Agent Framework**: Google Agent Development Kit (ADK)
 - **AI Model**: Google Gemini API (`gemini-2.5-flash` / `gemini-2.0-flash`)
 - **Data Validation & Typing**: Pydantic v2 & Pydantic-Settings
-- **Testing**: pytest & pytest-asyncio
-- **Database / Persistence**: Supabase PostgreSQL schema with local memory storage adapter
-- **Future Integrations**: Slack Bolt for Python, n8n webhook events
+- **Testing**: pytest & pytest-asyncio (30 passing tests)
+- **Database / Persistence**: Persistent SQLite (`data/mediator.db`) with async queries via `aiosqlite` and Supabase PostgreSQL DDL migrations
+- **Slack Teammate Integration**: Slack Bolt for Python in Socket Mode (`slack-bolt`)
+- **Web Dashboard**: Interactive dark-mode dashboard with real-time API binding, conflict inspection, evidence quotes, and decision sign-offs
 
 ---
 
@@ -23,7 +22,7 @@ An AI-powered team alignment backend built for hackathons and collaborative deve
 The system orchestrates a sequential multi-agent pipeline using Google ADK:
 
 ```
-[ Teammate Responses ]
+[ Teammate Responses ] (Web Dashboard or Slack Thread)
          │
          ▼
 ┌─────────────────────────────────┐
@@ -33,9 +32,9 @@ The system orchestrates a sequential multi-agent pipeline using Google ADK:
                  │ ExtractedPerspective & PerspectiveAnalysisOutput
                  ▼
 ┌─────────────────────────────────┐
-│   Agent 2: Conflict Agent       │  Identifies contradictory deadlines, incompatible
-│  (google.adk.agents.Agent)      │  goals, and testing gaps. Distinguishes direct
-└────────────────┬────────────────┘  disagreements from compatible differences.
+│   Agent 2: Conflict Agent       │  Identifies contradictory deadlines, sequence
+│  (google.adk.agents.Agent)      │  inversions, and role ownership gaps/overlaps.
+└────────────────┬────────────────┘  Distinguishes direct conflicts from compatible differences.
                  │ DetectedConflict & ConflictDetectionOutput
                  ▼
 ┌─────────────────────────────────┐
@@ -45,7 +44,7 @@ The system orchestrates a sequential multi-agent pipeline using Google ADK:
                  │ SynthesisReport
                  ▼
 ┌─────────────────────────────────┐
-│     Human Decision Gate         │  Teammates vote/sign-off on proposals.
+│     Human Decision Gate         │  Teammates vote/sign-off on proposals via UI/API.
 │  (Confirmed Project Commitment) │  Only human-approved actions become commitments!
 └─────────────────────────────────┘
 ```
@@ -55,17 +54,20 @@ The system orchestrates a sequential multi-agent pipeline using Google ADK:
 - Extracts project goals, priorities, responsibilities, and timeline expectations.
 - Preserves original meaning by quoting members verbatim in evidence fields.
 - Explicitly flags missing details or ambiguities rather than hallucinating facts.
+- Tracks `last_execution_mode` (`LIVE_GEMINI` vs `MOCK_DETERMINISTIC`).
 
 ### 2. Conflict Detection Agent (`app/agents/conflict.py`)
 - Compares individual perspectives across all teammates.
-- Detects contradictory deadlines (e.g., Friday frontend completion vs Thursday full launch).
-- Identifies unbudgeted dependencies (e.g., testing requirements raised without a scheduled testing window).
+- Detects contradictory deadlines (e.g., Saturday launch vs Sunday target).
+- Identifies unbudgeted dependencies (e.g., 24-hour QA testing window prerequisite).
+- Identifies role & responsibility confusion (e.g., both Alex and Taylor thinking the other owns deployment).
 - Distinguishes direct disagreements from compatible differences.
 - Assigns severity (`HIGH`, `MEDIUM`, `LOW`) using documented criteria with evidence citations.
 
 ### 3. Resolution & Synthesis Agent (`app/agents/resolution.py`)
 - Considers every teammate's perspective and constraints equitably.
 - Proposes realistic compromise schedules (e.g., phased launch, scope trimming, dedicated QA gates).
+- Proposes explicit role ownership splits (e.g., Taylor owns deployment pipeline, Alex owns smoke verification).
 - Formulates unresolved questions requiring team discussion.
 - **Strict Governance Rule**: All proposed resolutions have `status="PROPOSED"`. AI never auto-approves decisions.
 
@@ -76,8 +78,8 @@ The system orchestrates a sequential multi-agent pipeline using Google ADK:
 ```
 backend/
 ├── app/
-│   ├── main.py                  # FastAPI application entrypoint & middleware
-│   ├── config.py                # Environment configuration (pydantic-settings)
+│   ├── main.py                  # FastAPI application entrypoint, CORS, & UI routes
+│   ├── config.py                # Environment configuration & Slack settings
 │   ├── agents/
 │   │   ├── __init__.py
 │   │   ├── perspective.py       # Agent 1: Perspective Analysis Agent
@@ -86,6 +88,10 @@ backend/
 │   ├── workflows/
 │   │   ├── __init__.py
 │   │   └── alignment.py         # Multi-Agent Workflow Orchestrator (Google ADK)
+│   ├── slack/
+│   │   ├── __init__.py
+│   │   ├── service.py           # Context cleaning, user caching, & Block Kit generation
+│   │   └── bot.py               # Slack Bolt Socket Mode app & event deduplication
 │   ├── routes/
 │   │   ├── __init__.py
 │   │   ├── projects.py          # /api/projects endpoints
@@ -98,8 +104,12 @@ backend/
 │   │   └── database.py          # Supabase PostgreSQL schema and DDL
 │   └── services/
 │       ├── __init__.py
-│       ├── supabase.py          # Persistence service & storage adapter
+│       ├── supabase.py          # SQLite persistence adapter & Slack channel mappings
 │       └── analysis.py          # Analysis trigger and persistence coordinator
+├── dummy_frontend/
+│   └── index.html               # Interactive full-featured web dashboard
+├── migrations/
+│   └── 001_initial_schema.sql   # DDL migrations including slack_channel_mappings
 ├── tests/
 │   ├── __init__.py
 │   ├── conftest.py              # Test fixtures and async client
@@ -107,8 +117,11 @@ backend/
 │   ├── test_conflict_agent.py
 │   ├── test_resolution_agent.py
 │   ├── test_alignment_workflow.py
-│   └── test_api_endpoints.py    # End-to-end integration test
+│   ├── test_api_endpoints.py    # End-to-end integration test
+│   ├── test_demo_scenario.py    # 3-teammate conflicting scenario lifecycle test
+│   └── test_slack_bot.py        # Slack context cleaning & Block Kit test
 ├── run_scenario.py              # Interactive test scenario demonstration script
+├── run_slack_bot.py             # Slack Bolt Socket Mode runner script
 ├── .env.example                 # Configuration template
 ├── requirements.txt             # Backend dependencies
 └── README.md                    # Project documentation
@@ -121,6 +134,7 @@ backend/
 ### 1. Prerequisites
 - Python 3.11+
 - (Optional) Google Gemini API Key from [Google AI Studio](https://aistudio.google.com/)
+- (Optional) Slack App Bot and App-Level Tokens for Slack integration
 
 ### 2. Environment Setup
 
@@ -144,12 +158,19 @@ Copy `.env.example` to `.env`:
 cp .env.example .env
 ```
 
-Edit `.env` to supply your `GEMINI_API_KEY`:
+Edit `.env` to supply your configuration:
 
 ```env
+# Gemini Configuration
 GEMINI_API_KEY=your_gemini_api_key_here
 GEMINI_MODEL=gemini-2.5-flash
 APP_ENV=development
+
+# Slack Bolt Configuration (Optional)
+SLACK_BOT_TOKEN=xoxb-your-bot-token
+SLACK_APP_TOKEN=xapp-your-app-token
+SLACK_SIGNING_SECRET=your-signing-secret
+DASHBOARD_BASE_URL=http://localhost:8000
 ```
 
 > **Note**: If `GEMINI_API_KEY` is not provided or `MOCK_LLM=true`, the system automatically runs with a deterministic mock runner, allowing all offline development, demonstrations, and test suites to execute reliably!
@@ -171,17 +192,21 @@ python run_scenario.py
 pytest tests -v
 ```
 
-All 14 tests run and validate:
+All 30 automated tests pass and validate:
 - Perspective extraction and evidence preservation
-- Conflict detection (Friday vs Thursday deadline clash)
+- Conflict detection (Saturday vs Sunday launch deadline clash, ownership gaps)
 - Severity criteria and compatible differences
 - Resolution proposal generation with human action items
 - Governance safety invariant: AI proposals are never auto-approved
 - End-to-end FastAPI REST API lifecycle
+- Slack text cleaning, mention stripping, Block Kit formatting, and event deduplication
+- Database persistence across server reloads
 
 ---
 
-## 🌐 Running the FastAPI Server
+## 🌐 Running the Services
+
+### 1. FastAPI Server & Web Dashboard
 
 Start the local server with hot-reloading:
 
@@ -190,9 +215,18 @@ uvicorn app.main:app --reload --port 8000
 ```
 
 Once running:
+- **Interactive Web Dashboard**: [http://localhost:8000/dashboard](http://localhost:8000/dashboard) or [http://localhost:8000/](http://localhost:8000/)
 - **Interactive OpenAPI Documentation (Swagger UI)**: [http://localhost:8000/docs](http://localhost:8000/docs)
 - **ReDoc Documentation**: [http://localhost:8000/redoc](http://localhost:8000/redoc)
 - **Health Check**: [http://localhost:8000/health](http://localhost:8000/health)
+
+### 2. Slack Bot (Socket Mode)
+
+Start the Slack Bolt listener in Socket Mode:
+
+```bash
+python run_slack_bot.py
+```
 
 ---
 
@@ -210,22 +244,5 @@ Once running:
 | `GET` | `/api/projects/{id}/alignment` | Retrieve the latest synthesis report & proposals |
 | `POST` | `/api/projects/{id}/decisions` | Approve, reject, or modify proposed resolutions |
 | `GET` | `/api/projects/{id}/decisions` | Retrieve confirmed binding decisions |
-
----
-
-## 🔗 Future Integration Readiness
-
-### 1. Figma Make / Frontend Integration
-- All endpoints accept and return strict, validated JSON.
-- CORS is preconfigured in `app/main.py` (customizable via `CORS_ORIGINS`).
-- The frontend only needs to call `/api/projects/{id}/analyze` and render the structured `SynthesisReport`.
-
-### 2. Slack Bolt Integration
-- Teammate responses can be piped in from Slack channel messages via `POST /api/projects/{id}/responses`.
-- Slack interactive messages or modals can present `proposed_resolutions` with Approve / Reject buttons hitting `POST /api/projects/{id}/decisions`.
-
-### 3. n8n Automation
-- Webhooks can be triggered upon completion of `/analyze` or `/decisions` to notify team channels or update Jira/Linear tickets.
-
-### 4. Agent Extensibility
-- `AlignmentWorkflow.register_extension_agent(...)` allows easily appending future agents (e.g. `CommitmentTrackingAgent`, `OrchestratorAgent`) without modifying existing route handlers.
+| `GET` | `/dashboard` or `/` | Interactive web dashboard |
+| `GET` | `/health` | Service health check |
