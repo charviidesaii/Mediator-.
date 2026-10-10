@@ -40,3 +40,7 @@ env/
 .pytest_cache/
 .coverage
 htmlcov/
+
+# Local databases
+*.db
+data/

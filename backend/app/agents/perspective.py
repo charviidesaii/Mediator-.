@@ -4,12 +4,16 @@ Agent 1 in the multi-agent alignment workflow.
 Uses Google ADK to extract structured goals, priorities, responsibilities,
 deadlines, and missing details from unstructured teammate statements.
 Preserves original quotes and attributes every finding to its author.
+Supports arbitrary team members and arbitrary statements.
 """
 
 import json
 import logging
+import re
 from typing import Any, Dict, List, Optional
 from google.adk.agents import Agent
+from google.adk.runners import Runner
+from google.adk.sessions import InMemorySessionService
 from google.genai import Client, types
 
 from app.config import settings
@@ -30,7 +34,7 @@ You are the Perspective Analysis Agent on an AI Team Alignment Platform.
 Your purpose is to deeply and objectively understand individual teammates' perspectives from their submitted statements.
 
 Core Responsibilities:
-1. Process independently submitted teammate responses with complete neutrality.
+1. Process independently submitted teammate responses with complete neutrality for any participant.
 2. Extract the following structured elements for each teammate:
    - Goals: What does this person want to accomplish?
    - Priorities: What tasks or outcomes do they consider most urgent or important?
@@ -99,13 +103,46 @@ class PerspectiveAnalysisService:
             f"Extract each member's goals, priorities, responsibilities, deadlines, and missing details."
         )
 
-        # If mock mode is forced or no Gemini API key is available, execute deterministic extraction
-        if settings.mock_llm or not self.client:
-            logger.info("Using deterministic Perspective Analysis logic (mock mode / no API key)")
+        # If mock mode is active or no Gemini API key is configured, run generalized deterministic analysis
+        if not settings.is_live_gemini_available:
+            logger.info("Perspective Analysis running in deterministic mode (no live Gemini key or mock enabled)")
             return self._mock_analyze(responses)
 
-        # Live Gemini execution via google-genai / ADK schema
+        # Live Google ADK / Gemini execution
         try:
+            logger.info(f"Invoking Google ADK Perspective Agent with model: {settings.gemini_model}")
+            if settings.use_adk_runner:
+                # Genuine Google ADK execution via Runner and SessionService
+                session_service = InMemorySessionService()
+                session = await session_service.create_session(
+                    app_name="mediator", user_id="system_coordinator"
+                )
+                runner = Runner(
+                    agent=self.adk_agent,
+                    app_name="mediator",
+                    session_service=session_service,
+                )
+                user_content = types.Content(
+                    role="user",
+                    parts=[types.Part.from_text(text=prompt)],
+                )
+
+                final_text = ""
+                async for event in runner.run_async(
+                    user_id="system_coordinator",
+                    session_id=session.id,
+                    new_message=user_content,
+                ):
+                    if event.is_final_response() and event.content and event.content.parts:
+                        for part in event.content.parts:
+                            if part.text and not getattr(part, "thought", False):
+                                final_text += part.text
+
+                if final_text.strip():
+                    data = json.loads(final_text)
+                    return PerspectiveAnalysisOutput.model_validate(data)
+
+            # Direct fallback if ADK runner stream is empty
             config = types.GenerateContentConfig(
                 system_instruction=PERSPECTIVE_AGENT_INSTRUCTION,
                 response_mime_type="application/json",
@@ -123,18 +160,19 @@ class PerspectiveAnalysisService:
             else:
                 raise ValueError("Empty response received from Gemini model.")
         except Exception as e:
-            logger.error("Error calling Gemini API for Perspective Analysis: %s", e)
+            logger.error("Error executing Google ADK / Gemini for Perspective Analysis: %s", e)
             if settings.app_env == "development" or settings.mock_llm:
                 logger.warning("Falling back to deterministic perspective extraction after error.")
                 return self._mock_analyze(responses)
             raise
 
     def _mock_analyze(self, responses: List[MemberResponse]) -> PerspectiveAnalysisOutput:
-        """Deterministic perspective extraction for test scenarios and offline development."""
+        """Generalized deterministic perspective extraction for arbitrary participants."""
         perspectives: List[ExtractedPerspective] = []
+        days_regex = re.compile(r"\b(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b", re.IGNORECASE)
 
         for resp in responses:
-            name = resp.member_name
+            name = resp.member_name.strip()
             text = resp.raw_text.strip()
             text_lower = text.lower()
 
@@ -144,29 +182,32 @@ class PerspectiveAnalysisService:
             deadlines: List[DeadlineItem] = []
             ambiguities: List[str] = []
 
-            # 1. Deadline extraction
-            for day in ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]:
-                if day in text_lower:
+            # 1. Dynamic Deadline Extraction for any day mentioned
+            matched_days = days_regex.findall(text)
+            if matched_days:
+                for day in matched_days:
                     cap_day = day.capitalize()
-                    milestone = "Milestone / Deliverable"
-                    if "frontend" in text_lower:
+                    milestone = "Target Milestone"
+                    if "frontend" in text_lower or "ui" in text_lower:
                         milestone = "Frontend Completion"
-                    elif "launch" in text_lower:
+                    elif "backend" in text_lower or "api" in text_lower:
+                        milestone = "Backend / API Completion"
+                    elif "launch" in text_lower or "release" in text_lower:
                         milestone = "Full Application Launch"
-                    elif "test" in text_lower:
+                    elif "test" in text_lower or "qa" in text_lower:
                         milestone = "Testing Completion"
 
                     deadlines.append(
                         DeadlineItem(
                             milestone=milestone,
                             expected_deadline=cap_day,
-                            is_tentative="thought" in text_lower or "think" in text_lower,
+                            is_tentative="thought" in text_lower or "think" in text_lower or "maybe" in text_lower,
                             source_quote=text,
                         )
                     )
 
-            # 2. Priority extraction
-            if "priority" in text_lower or "focus" in text_lower or "first" in text_lower:
+            # 2. Dynamic Priority Extraction
+            if any(w in text_lower for w in ["priority", "first", "urgent", "critical", "must"]):
                 priorities.append(
                     PriorityItem(
                         priority_item=text,
@@ -174,10 +215,10 @@ class PerspectiveAnalysisService:
                         source_quote=text,
                     )
                 )
-            elif "before" in text_lower or "prerequisite" in text_lower:
+            elif any(w in text_lower for w in ["before", "prerequisite", "require", "need to"]):
                 priorities.append(
                     PriorityItem(
-                        priority_item=f"Prerequisite sequence: {text}",
+                        priority_item=f"Prerequisite requirement: {text}",
                         urgency_level="HIGH",
                         source_quote=text,
                     )
@@ -191,60 +232,85 @@ class PerspectiveAnalysisService:
                     )
                 )
 
-            # 3. Goals & Responsibilities
-            if "frontend" in text_lower:
+            # 3. Dynamic Goals & Responsibilities
+            if "frontend" in text_lower or "ui" in text_lower:
                 goals.append(
                     GoalItem(
-                        statement="Complete frontend interface",
+                        statement="Complete frontend user interface",
                         source_quote=text,
                         clarity="CLEAR",
                     )
                 )
                 responsibilities.append(
                     ResponsibilityItem(
-                        responsibility="Frontend development",
+                        responsibility="Frontend delivery",
                         assigned_to=name,
                         source_quote=text,
                     )
                 )
-            if "launch" in text_lower:
+            if "backend" in text_lower or "api" in text_lower:
                 goals.append(
                     GoalItem(
-                        statement="Launch the entire application",
+                        statement="Complete backend service and database APIs",
                         source_quote=text,
                         clarity="CLEAR",
                     )
                 )
                 responsibilities.append(
                     ResponsibilityItem(
-                        responsibility="Application deployment and launch",
+                        responsibility="Backend engineering",
+                        assigned_to=name,
+                        source_quote=text,
+                    )
+                )
+            if "launch" in text_lower or "release" in text_lower:
+                goals.append(
+                    GoalItem(
+                        statement="Launch the application to users",
+                        source_quote=text,
+                        clarity="CLEAR",
+                    )
+                )
+                responsibilities.append(
+                    ResponsibilityItem(
+                        responsibility="Release coordination",
                         assigned_to="Team",
                         source_quote=text,
                     )
                 )
-            if "test" in text_lower or "testing" in text_lower:
+            if "test" in text_lower or "qa" in text_lower:
                 goals.append(
                     GoalItem(
-                        statement="Complete comprehensive testing before any launch",
+                        statement="Complete quality assurance and testing prior to release",
                         source_quote=text,
                         clarity="CLEAR",
                     )
                 )
                 responsibilities.append(
                     ResponsibilityItem(
-                        responsibility="Quality Assurance / Testing",
-                        assigned_to=name if "i" in text_lower else "QA / Team",
+                        responsibility="Quality Assurance",
+                        assigned_to=name,
                         source_quote=text,
                     )
                 )
 
-            # 4. Ambiguities & Missing Details (not invented, strictly noted)
-            if "test" in text_lower and not any(day in text_lower for day in ["monday", "tuesday", "wednesday", "thursday", "friday"]):
-                ambiguities.append("Testing duration and specific completion date are not specified.")
-            if "launch" in text_lower and "frontend" not in text_lower and "test" not in text_lower:
-                ambiguities.append("Launch scope does not explicitly mention prerequisite completion or testing window.")
-            if "frontend" in text_lower and "backend" not in text_lower and "launch" not in text_lower:
-                ambiguities.append("Frontend timeline does not mention integration with backend or final release date.")
+            # Fallback goal if none of standard keywords matched
+            if not goals:
+                goals.append(
+                    GoalItem(
+                        statement=f"Deliver milestone stated by {name}",
+                        source_quote=text,
+                        clarity="INFERRED",
+                    )
+                )
+
+            # 4. Dynamic Ambiguity & Missing Information Detection
+            if ("test" in text_lower or "qa" in text_lower) and not matched_days:
+                ambiguities.append(f"Testing duration and completion schedule not specified by {name}.")
+            if ("launch" in text_lower) and not any(k in text_lower for k in ["test", "qa", "freeze"]):
+                ambiguities.append(f"Release timeline stated by {name} does not explicitly allocate buffer for QA.")
+            if not matched_days:
+                ambiguities.append(f"No explicit calendar deadline provided in statement: '{text}'.")
 
             perspectives.append(
                 ExtractedPerspective(
@@ -259,21 +325,24 @@ class PerspectiveAnalysisService:
             )
 
         # Cross-cutting gaps
-        has_testing_schedule = any(
+        has_qa_schedule = any(
             d.milestone == "Testing Completion" for p in perspectives for d in p.deadlines
         )
         cross_cutting_gaps = []
-        if not has_testing_schedule:
+        if not has_qa_schedule and any("test" in p.member_name.lower() or any("test" in g.statement.lower() for g in p.goals) for p in perspectives):
             cross_cutting_gaps.append(
-                "No explicit start date or duration was provided for application testing."
+                "Testing was raised as a requirement, but no calendar start date or duration was scheduled."
             )
+        elif not any(p.deadlines for p in perspectives):
+            cross_cutting_gaps.append("No explicit milestone deadlines were stated across submitted team viewpoints.")
 
         return PerspectiveAnalysisOutput(
             perspectives=perspectives,
             total_members_analyzed=len(perspectives),
             overall_summary=(
-                f"Analyzed {len(perspectives)} teammate perspective(s). Identified core goals "
-                "surrounding frontend completion, application launch timing, and pre-launch testing requirements."
+                f"Analyzed {len(perspectives)} teammate perspective(s) across participants: "
+                f"{', '.join(p.member_name for p in perspectives)}. Extracted distinct milestone targets, "
+                "individual priorities, and unaddressed dependency gaps."
             ),
             identified_gaps=cross_cutting_gaps,
         )

@@ -3,7 +3,7 @@
 from fastapi import APIRouter, HTTPException, status
 from typing import List
 
-from app.models.schemas import ConfirmedDecision, DecisionActionRequest
+from app.models.schemas import APIErrorResponse, ConfirmedDecision, DecisionActionRequest
 from app.services.supabase import storage_service
 
 router = APIRouter(prefix="/projects", tags=["Decisions"])
@@ -13,11 +13,16 @@ router = APIRouter(prefix="/projects", tags=["Decisions"])
     "/{project_id}/decisions",
     response_model=ConfirmedDecision,
     status_code=status.HTTP_201_CREATED,
+    responses={
+        400: {"model": APIErrorResponse},
+        404: {"model": APIErrorResponse},
+    },
 )
 async def record_decision(project_id: str, action: DecisionActionRequest):
     """Approve, reject, or modify an AI-proposed resolution into an official project commitment.
 
     Only human-approved actions transition an AI proposal into an official project commitment.
+    Validates that the resolution_id exists in the project's latest analysis report.
     """
     project = await storage_service.get_project(project_id)
     if not project:
@@ -26,13 +31,20 @@ async def record_decision(project_id: str, action: DecisionActionRequest):
             detail=f"Project with ID '{project_id}' not found.",
         )
 
-    confirmed = await storage_service.record_decision(project_id, action)
-    return confirmed
+    try:
+        confirmed = await storage_service.record_decision(project_id, action)
+        return confirmed
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e),
+        )
 
 
 @router.get(
     "/{project_id}/decisions",
     response_model=List[ConfirmedDecision],
+    responses={404: {"model": APIErrorResponse}},
 )
 async def list_decisions(project_id: str):
     """Retrieve all confirmed human decisions and project commitments."""

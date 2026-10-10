@@ -2,7 +2,7 @@
 
 Agent 3 in the multi-agent alignment workflow.
 Synthesizes detected conflicts and individual perspectives to recommend
-realistic compromises and actionable solutions.
+realistic compromises and actionable solutions across arbitrary participants.
 
 CRITICAL GOVERNANCE CONSTRAINT:
 Never automatically finalizes team decisions.
@@ -14,6 +14,8 @@ import json
 import logging
 from typing import Any, Dict, List, Optional
 from google.adk.agents import Agent
+from google.adk.runners import Runner
+from google.adk.sessions import InMemorySessionService
 from google.genai import Client, types
 
 from app.config import settings
@@ -42,7 +44,7 @@ CRITICAL GOVERNANCE PRINCIPLES:
 3. PRAGMATIC COMPROMISES & OPTIONS:
    - For every detected conflict, formulate a primary `recommended_solution` with clear reasoning.
    - Provide concrete alternative options (`alternative_options`) showing pros, cons, and trade-offs.
-   - For deadline clashes, propose realistic sequenced schedules (e.g. accommodating frontend finish, QA window, and launch).
+   - For deadline clashes, propose realistic sequenced schedules (e.g. accommodating development finish, QA window, and launch).
 4. UNRESOLVED QUESTIONS:
    - Explicitly list specific questions that require human consensus and cannot be decided by AI.
 5. ESTIMATE ALIGNMENT SCORE:
@@ -88,13 +90,49 @@ class ResolutionSynthesisService:
             f"clearly marked as PROPOSED, and highlight human action items."
         )
 
-        # If mock mode is forced or no Gemini API key is available, execute deterministic synthesis
-        if settings.mock_llm or not self.client:
-            logger.info("Using deterministic Resolution & Synthesis logic (mock mode / no API key)")
+        # If mock mode is active or no Gemini API key is configured, run generalized deterministic synthesis
+        if not settings.is_live_gemini_available:
+            logger.info("Resolution Synthesis running in deterministic mode (no live Gemini key or mock enabled)")
             return self._mock_synthesize(project_id, perspectives, conflicts)
 
-        # Live Gemini execution via google-genai / ADK schema
+        # Live Google ADK / Gemini execution
         try:
+            logger.info(f"Invoking Google ADK Resolution Agent with model: {settings.gemini_model}")
+            if settings.use_adk_runner:
+                session_service = InMemorySessionService()
+                session = await session_service.create_session(
+                    app_name="mediator", user_id="system_coordinator"
+                )
+                runner = Runner(
+                    agent=self.adk_agent,
+                    app_name="mediator",
+                    session_service=session_service,
+                )
+                user_content = types.Content(
+                    role="user",
+                    parts=[types.Part.from_text(text=prompt)],
+                )
+
+                final_text = ""
+                async for event in runner.run_async(
+                    user_id="system_coordinator",
+                    session_id=session.id,
+                    new_message=user_content,
+                ):
+                    if event.is_final_response() and event.content and event.content.parts:
+                        for part in event.content.parts:
+                            if part.text and not getattr(part, "thought", False):
+                                final_text += part.text
+
+                if final_text.strip():
+                    data = json.loads(final_text)
+                    report = SynthesisReport.model_validate(data)
+                    report.project_id = project_id
+                    for res in report.proposed_resolutions:
+                        res.status = "PROPOSED"
+                    return report
+
+            # Direct fallback if ADK runner stream is empty
             config = types.GenerateContentConfig(
                 system_instruction=RESOLUTION_AGENT_INSTRUCTION,
                 response_mime_type="application/json",
@@ -117,7 +155,7 @@ class ResolutionSynthesisService:
             else:
                 raise ValueError("Empty response received from Gemini model.")
         except Exception as e:
-            logger.error("Error calling Gemini API for Resolution & Synthesis: %s", e)
+            logger.error("Error executing Google ADK / Gemini for Resolution Synthesis: %s", e)
             if settings.app_env == "development" or settings.mock_llm:
                 logger.warning("Falling back to deterministic synthesis after error.")
                 return self._mock_synthesize(project_id, perspectives, conflicts)
@@ -129,128 +167,167 @@ class ResolutionSynthesisService:
         perspectives: PerspectiveAnalysisOutput,
         conflicts: ConflictDetectionOutput,
     ) -> SynthesisReport:
-        """Deterministic resolution synthesis for test scenarios and offline development."""
+        """Generalized deterministic resolution synthesis for arbitrary participants."""
         proposed_resolutions: List[ProposedResolution] = []
+        res_counter = 1
 
-        # Find deadline contradiction conflict
         for conflict in conflicts.conflicts:
+            parties = ", ".join(conflict.parties_involved)
+
             if conflict.conflict_type.value == "DEADLINE_CONTRADICTION":
                 proposed_resolutions.append(
                     ProposedResolution(
-                        resolution_id="RES-01",
+                        resolution_id=f"RES-{res_counter:02d}",
                         conflict_id=conflict.conflict_id,
                         conflict_title=conflict.title,
                         recommended_solution=(
-                            "Adopt a realistic phased schedule: Accelerate frontend MVP by Thursday afternoon "
-                            "or adjust official launch to Monday morning, reserving Friday for dedicated testing. "
-                            "Alternatively, if a Thursday soft launch is mandatory, launch with backend core APIs "
-                            "and release the full frontend on Friday."
+                            f"Adopt a synchronized milestone schedule accommodating {parties}: "
+                            "Reschedule the full public launch to follow prerequisite completion, "
+                            "or define a limited P0 MVP soft launch on the earlier target date while "
+                            "final deliverables and thorough regression testing proceed."
                         ),
                         reasoning=(
-                            "Alex needs until Friday for frontend delivery, while Sam intended a Thursday launch. "
-                            "Launching on Thursday is physically impossible if the frontend is incomplete. "
-                            "Rescheduling public launch to Monday allows frontend completion by Friday and "
-                            "gives Taylor the weekend/Friday afternoon to test thoroughly without emergency hotfixes."
+                            f"Identified conflicting milestone sequencing between {parties}. "
+                            "A software deliverable cannot physically launch before its core dependencies are complete. "
+                            "Aligning the release schedule protects product quality while respecting individual delivery constraints."
                         ),
                         alternative_options=[
                             ResolutionOption(
-                                option_id="OPT-A",
-                                title="Adjust Public Launch to Friday Afternoon or Monday",
-                                description=(
-                                    "Move Sam's full launch date from Thursday to Friday afternoon (soft launch) "
-                                    "or Monday morning, enabling Alex to complete the frontend on Friday morning."
-                                ),
-                                pros=["Preserves full frontend scope", "Avoids high-stress crunch"],
-                                cons=["Delays Sam's target Thursday release by 1 to 3 days"],
-                                compromise_notes="Satisfies Alex's completion timeline and accommodates quality review.",
+                                option_id=f"OPT-{res_counter}A",
+                                title="Adjust Public Launch Date",
+                                description="Shift the target launch date by 1 to 3 days to allow all prerequisite development and testing gates to complete fully.",
+                                pros=["Ensures full feature scope", "Avoids high-stress crunch"],
+                                cons=["Extends initial launch milestone"],
+                                compromise_notes=f"Directly accommodates delivery timelines stated by {parties}.",
                             ),
                             ResolutionOption(
-                                option_id="OPT-B",
-                                title="Scope Trimming for Thursday Partial Launch",
-                                description=(
-                                    "Alex ships an essential 'P0-only' frontend subset by Wednesday evening, "
-                                    "allowing testing on Thursday morning and a limited Thursday soft launch."
-                                ),
-                                pros=["Maintains Sam's Thursday launch target"],
-                                cons=["Frontend will have reduced polish and missing secondary features"],
-                                compromise_notes="Compromises on feature scope to preserve target date.",
+                                option_id=f"OPT-{res_counter}B",
+                                title="Scope Trimming for Early Soft Launch",
+                                description="Trim non-essential feature scope to ship an MVP core on the earlier date, reserving complete features for a subsequent release.",
+                                pros=["Preserves earlier launch timeline target"],
+                                cons=["Requires cutting or deferring secondary features"],
+                                compromise_notes="Compromises on feature scope in exchange for speed.",
                             ),
                         ],
                         impacted_members=conflict.parties_involved,
                         unresolved_questions_for_team=[
-                            "Is Sam's Thursday deadline driven by an external stakeholder or internal preference?",
-                            "Can Alex scope down the frontend to a P0 MVP deliverable by Wednesday evening?",
-                            "Would Sam accept a Monday launch if it guarantees full testing and polish?",
+                            f"Is the earlier target launch date an unmovable external commitment or an internal goal?",
+                            f"Can {parties} agree on a minimal subset of P0 features that would be acceptable for an earlier beta release?",
+                            f"What is the latest acceptable date for full public release?",
                         ],
                         status="PROPOSED",
                     )
                 )
+                res_counter += 1
 
             elif conflict.conflict_type.value == "INFORMATION_GAP":
                 proposed_resolutions.append(
                     ProposedResolution(
-                        resolution_id="RES-02",
+                        resolution_id=f"RES-{res_counter:02d}",
                         conflict_id=conflict.conflict_id,
                         conflict_title=conflict.title,
                         recommended_solution=(
-                            "Establish an explicit QA Testing window: Taylor leads a 24-hour testing cycle "
-                            "commencing immediately upon frontend and backend feature freeze."
+                            f"Establish an explicit dedicated Quality Assurance gate between {parties}: "
+                            "Budget a formal testing cycle of 24-48 hours immediately following feature code freeze."
                         ),
                         reasoning=(
-                            "Taylor rightly highlighted that launching without testing invites critical failures. "
-                            "By budgeting an explicit QA window into the project timeline, the team protects "
-                            "product stability while acknowledging Alex and Sam's delivery goals."
+                            "Releasing without a dedicated testing window creates substantial stability and reputation risk. "
+                            "Formally scheduling a QA gate gives engineers predictable handoff times and protects product reliability."
                         ),
                         alternative_options=[
                             ResolutionOption(
-                                option_id="OPT-QA-1",
-                                title="Dedicated Testing Gate",
-                                description="Freeze all development 24 hours prior to public release for regression testing.",
-                                pros=["High stability", "Reduced launch bugs"],
-                                cons=["Requires early code freeze"],
-                                compromise_notes="Protects Taylor's quality standard without indefinite delays.",
+                                option_id=f"OPT-{res_counter}A",
+                                title="Formal Code Freeze and QA Window",
+                                description="Freeze all incoming feature code 24 hours prior to release for smoke and regression testing.",
+                                pros=["Maximizes release reliability and bug discovery"],
+                                cons=["Prevents last-minute code additions"],
+                                compromise_notes=f"Satisfies quality requirements raised by {parties}.",
                             ),
                             ResolutionOption(
-                                option_id="OPT-QA-2",
-                                title="Concurrent Feature Smoke Testing",
-                                description="Taylor conducts ongoing component testing as Alex finishes individual screens.",
+                                option_id=f"OPT-{res_counter}B",
+                                title="Continuous Component Smoke Testing",
+                                description="Run incremental test suites against individual components as they are completed.",
                                 pros=["Shortens testing turnaround after final merge"],
-                                cons=["Higher coordination overhead between Alex and Taylor"],
-                                compromise_notes="Allows faster path to launch while testing iteratively.",
+                                cons=["Requires higher coordination overhead during development"],
+                                compromise_notes="Enables ongoing testing in parallel with development.",
                             ),
                         ],
                         impacted_members=conflict.parties_involved,
                         unresolved_questions_for_team=[
-                            "How many hours of testing are required before Taylor feels confident signing off?",
-                            "Can Taylor begin testing API endpoints and mock components before the full UI is merged?",
+                            "What are the minimum acceptance test criteria required for release sign-off?",
+                            "Who holds final decision authority to approve or block the release based on test outcomes?",
                         ],
                         status="PROPOSED",
                     )
                 )
+                res_counter += 1
+
+            else:
+                proposed_resolutions.append(
+                    ProposedResolution(
+                        resolution_id=f"RES-{res_counter:02d}",
+                        conflict_id=conflict.conflict_id,
+                        conflict_title=conflict.title,
+                        recommended_solution=f"Schedule a 15-minute alignment sync between {parties} to agree on prioritized deliverables.",
+                        reasoning="Direct dialogue with clear trade-offs will resolve non-blocking priority divergences.",
+                        alternative_options=[
+                            ResolutionOption(
+                                option_id=f"OPT-{res_counter}A",
+                                title="Consensus Alignment",
+                                description="Agree on a single prioritized backlog.",
+                                pros=["Full team alignment"],
+                                cons=["Requires negotiation"],
+                                compromise_notes="Balances individual concerns.",
+                            )
+                        ],
+                        impacted_members=conflict.parties_involved,
+                        unresolved_questions_for_team=["Which objective takes priority if time runs short?"],
+                        status="PROPOSED",
+                    )
+                )
+                res_counter += 1
+
+        # Fallback resolution if 0 conflicts detected
+        if not proposed_resolutions:
+            proposed_resolutions.append(
+                ProposedResolution(
+                    resolution_id="RES-01",
+                    conflict_id="ALIGN-01",
+                    conflict_title="Team Timeline Synchronization",
+                    recommended_solution="Confirm milestone targets and proceed with planned deliverables.",
+                    reasoning="No direct contradictions were detected among submitted perspectives.",
+                    alternative_options=[],
+                    impacted_members=[p.member_name for p in perspectives.perspectives],
+                    unresolved_questions_for_team=["Are there any external dependencies not captured in initial statements?"],
+                    status="PROPOSED",
+                )
+            )
 
         key_findings = [
-            "Severe schedule contradiction between Friday frontend completion and Thursday application launch.",
-            "Testing requirements raised by Taylor were previously unbudgeted in the launch timeline.",
-            "The team shares a common goal of a successful launch, but lacks a synchronized milestone roadmap.",
+            f"Analyzed {len(perspectives.perspectives)} participant perspective(s) with {len(conflicts.conflicts)} detected misalignment(s).",
+            f"Key focus areas identified: {', '.join(set(g.statement for p in perspectives.perspectives for g in p.goals)) if perspectives.perspectives else 'None'}.",
         ]
+        if any(c.severity.value == "HIGH" for c in conflicts.conflicts):
+            key_findings.append("A high-severity milestone contradiction requires team reconciliation before proceeding.")
 
         human_action_items = [
-            "Team discussion needed: Vote on whether to reschedule launch to Monday or reduce frontend scope for Thursday.",
-            "Alex and Taylor to agree on code freeze deadline for QA handoff.",
-            "Confirm test plan requirements and minimum criteria for release sign-off.",
+            "Team review required: Review proposed compromise options and vote on schedule realignment.",
+            "Confirm handoff dates between implementation leads and QA.",
+            "Record final approved commitments through the /decisions API.",
         ]
 
-        # Calculate alignment index (e.g. 55% given high severity conflict)
-        alignment_score = 55.0 if any(c.severity.value == "HIGH" for c in conflicts.conflicts) else 75.0
+        # Calculate alignment index
+        high_conflicts = len([c for c in conflicts.conflicts if c.severity.value == "HIGH"])
+        med_conflicts = len([c for c in conflicts.conflicts if c.severity.value == "MEDIUM"])
+        alignment_score = max(20.0, min(100.0, 100.0 - (high_conflicts * 25.0) - (med_conflicts * 15.0)))
 
         return SynthesisReport(
-            report_id="SYNTH-01",
+            report_id=f"SYNTH-{project_id[:8]}",
             project_id=project_id,
             executive_summary=(
-                "The team is aligned on the objective to launch, but has conflicting timeline assumptions. "
-                "Alex has targeted frontend delivery for Friday, which directly clashes with Sam's expected "
-                "Thursday launch. Taylor has also introduced a crucial prerequisite for comprehensive testing. "
-                "Two realistic compromise paths (Schedule Extension vs Scope Reduction) are proposed for team review."
+                f"The multi-agent alignment workflow evaluated perspectives from {len(perspectives.perspectives)} teammate(s). "
+                f"Generated {len(proposed_resolutions)} proposed resolution(s) addressing {len(conflicts.conflicts)} conflict(s). "
+                "All proposals require human team sign-off."
             ),
             alignment_score=alignment_score,
             key_findings=key_findings,

@@ -2,7 +2,7 @@
 
 from fastapi import APIRouter, HTTPException, status
 
-from app.models.schemas import AlignmentWorkflowResult, SynthesisReport
+from app.models.schemas import APIErrorResponse, AlignmentWorkflowResult, SynthesisReport
 from app.services.analysis import analysis_service
 
 router = APIRouter(prefix="/projects", tags=["Analysis"])
@@ -12,6 +12,11 @@ router = APIRouter(prefix="/projects", tags=["Analysis"])
     "/{project_id}/analyze",
     response_model=AlignmentWorkflowResult,
     status_code=status.HTTP_200_OK,
+    responses={
+        400: {"model": APIErrorResponse},
+        404: {"model": APIErrorResponse},
+        500: {"model": APIErrorResponse},
+    },
 )
 async def trigger_analysis(project_id: str):
     """Trigger the multi-agent alignment workflow (Perspective -> Conflict -> Resolution).
@@ -25,9 +30,15 @@ async def trigger_analysis(project_id: str):
         result = await analysis_service.trigger_analysis(project_id)
         return result
     except ValueError as e:
+        err_msg = str(e)
+        if "not found" in err_msg.lower():
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=err_msg,
+            )
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(e),
+            detail=err_msg,
         )
     except Exception as e:
         raise HTTPException(
@@ -40,6 +51,7 @@ async def trigger_analysis(project_id: str):
     "/{project_id}/alignment",
     response_model=SynthesisReport,
     status_code=status.HTTP_200_OK,
+    responses={404: {"model": APIErrorResponse}},
 )
 async def get_alignment_report(project_id: str):
     """Retrieve the latest alignment synthesis report for a project."""

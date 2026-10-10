@@ -10,7 +10,8 @@ Key architectural guarantees:
 4. Stores complete intermediate states for debugging and auditing.
 5. Retries with exponential backoff on transient errors.
 6. Strictly prevents auto-approval of resolutions.
-7. Designed for extensibility: future Commitment Tracking & Orchestrator agents can be appended.
+7. Explicitly marks execution mode (LIVE_GEMINI vs MOCK_DETERMINISTIC).
+8. Designed for extensibility: future Commitment Tracking & Orchestrator agents can be appended.
 """
 
 import asyncio
@@ -116,7 +117,8 @@ class AlignmentWorkflow:
         workflow_id = f"wf-{uuid.uuid4().hex[:10]}"
         intermediate_results: Dict[str, Any] = {}
 
-        logger.info(f"Starting Alignment Workflow [{workflow_id}] for project: {project_id}")
+        execution_mode = "LIVE_GEMINI" if settings.is_live_gemini_available else "MOCK_DETERMINISTIC"
+        logger.info(f"Starting Alignment Workflow [{workflow_id}] for project: {project_id} in {execution_mode} mode")
 
         # ---------------------------------------------------------
         # Stage 1: Perspective Analysis Agent
@@ -174,6 +176,9 @@ class AlignmentWorkflow:
             "project_id": project_id,
             "duration_seconds": duration,
             "model": settings.gemini_model,
+            "framework": "Google Agent Development Kit (ADK) v2.11.0",
+            "adk_workflow_graph": self.adk_workflow.name,
+            "adk_runner_enabled": settings.use_adk_runner,
             "agent_sequence": [
                 "perspective_analysis_agent",
                 "conflict_detection_agent",
@@ -182,9 +187,10 @@ class AlignmentWorkflow:
             "total_responses_analyzed": len(responses),
             "conflicts_detected": len(conflicts_output.conflicts),
             "resolutions_proposed": len(synthesis_output.proposed_resolutions),
+            "execution_mode": execution_mode,
         }
 
-        logger.info(f"Workflow [{workflow_id}] completed successfully in {duration}s")
+        logger.info(f"Workflow [{workflow_id}] completed successfully in {duration}s [{execution_mode}]")
 
         return AlignmentWorkflowResult(
             workflow_id=workflow_id,
@@ -194,4 +200,5 @@ class AlignmentWorkflow:
             synthesis_output=synthesis_output,
             intermediate_results=intermediate_results,
             execution_metadata=execution_metadata,
+            execution_mode=execution_mode,
         )

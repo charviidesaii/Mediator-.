@@ -9,9 +9,17 @@ from pydantic import BaseModel, Field, field_validator
 # ==========================================
 
 class TeamMemberBase(BaseModel):
-    name: str = Field(..., description="Full name or alias of the team member")
-    role: Optional[str] = Field(default=None, description="Role in team (e.g. Frontend, Backend, PM, QA)")
-    email: Optional[str] = Field(default=None, description="Optional email address")
+    name: str = Field(..., min_length=1, max_length=100, description="Full name or alias of the team member")
+    role: Optional[str] = Field(default=None, max_length=100, description="Role in team (e.g. Frontend, Backend, PM, QA)")
+    email: Optional[str] = Field(default=None, max_length=200, description="Optional email address")
+
+    @field_validator("name", mode="before")
+    def validate_name(cls, v):
+        if isinstance(v, str):
+            v = v.strip()
+            if not v:
+                raise ValueError("Member name cannot be empty or blank whitespace.")
+        return v
 
 
 class TeamMemberCreate(TeamMemberBase):
@@ -24,8 +32,16 @@ class TeamMember(TeamMemberBase):
 
 
 class ProjectBase(BaseModel):
-    title: str = Field(..., description="Project name")
-    description: Optional[str] = Field(default=None, description="Project goals and overview")
+    title: str = Field(..., min_length=1, max_length=200, description="Project name")
+    description: Optional[str] = Field(default=None, max_length=1000, description="Project goals and overview")
+
+    @field_validator("title", mode="before")
+    def validate_title(cls, v):
+        if isinstance(v, str):
+            v = v.strip()
+            if not v:
+                raise ValueError("Project title cannot be empty or blank whitespace.")
+        return v
 
 
 class ProjectCreate(ProjectBase):
@@ -39,9 +55,25 @@ class Project(ProjectBase):
 
 
 class MemberResponseSubmit(BaseModel):
-    member_name: str = Field(..., description="Name of the team member submitting perspective")
-    raw_text: str = Field(..., description="Unstructured response or viewpoint from the teammate")
+    member_name: str = Field(..., min_length=1, max_length=100, description="Name of the team member submitting perspective")
+    raw_text: str = Field(..., min_length=1, description="Unstructured response or viewpoint from the teammate")
     source: str = Field(default="direct_submission", description="Source of submission (e.g. form, slack, direct)")
+
+    @field_validator("member_name", mode="before")
+    def validate_member_name(cls, v):
+        if isinstance(v, str):
+            v = v.strip()
+            if not v:
+                raise ValueError("Member name cannot be empty or blank whitespace.")
+        return v
+
+    @field_validator("raw_text", mode="before")
+    def validate_raw_text(cls, v):
+        if isinstance(v, str):
+            v = v.strip()
+            if not v:
+                raise ValueError("Response text cannot be empty or blank whitespace.")
+        return v
 
 
 class MemberResponse(BaseModel):
@@ -245,6 +277,10 @@ class AlignmentWorkflowResult(BaseModel):
     execution_metadata: Dict[str, Any] = Field(
         default_factory=dict, description="Execution timing, model used, and trace metadata"
     )
+    execution_mode: str = Field(
+        default="MOCK_DETERMINISTIC",
+        description="Explicit indicator: 'LIVE_GEMINI' or 'MOCK_DETERMINISTIC'",
+    )
 
 
 # ==========================================
@@ -259,13 +295,21 @@ class DecisionStatus(str, Enum):
 
 
 class DecisionActionRequest(BaseModel):
-    resolution_id: str = Field(..., description="ID of the resolution to act upon")
+    resolution_id: str = Field(..., min_length=1, description="ID of the resolution to act upon")
     action: Literal["APPROVE", "REJECT", "MODIFY"] = Field(..., description="Action to take")
     decision_text: Optional[str] = Field(
         default=None, description="Official agreed commitment text (required if MODIFY or if customized)"
     )
-    decided_by: str = Field(..., description="Name or ID of team member approving/rejecting")
+    decided_by: str = Field(..., min_length=1, description="Name or ID of team member approving/rejecting")
     notes: Optional[str] = Field(default=None, description="Notes on why the decision was taken")
+
+    @field_validator("resolution_id", "decided_by", mode="before")
+    def validate_non_empty_strings(cls, v):
+        if isinstance(v, str):
+            v = v.strip()
+            if not v:
+                raise ValueError("Field cannot be empty or whitespace.")
+        return v
 
 
 class ConfirmedDecision(BaseModel):
@@ -277,3 +321,11 @@ class ConfirmedDecision(BaseModel):
     decided_by: str = Field(..., description="Team member who recorded the decision")
     decided_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     notes: Optional[str] = Field(default=None)
+
+
+# Standard Error Envelope Schema
+class APIErrorResponse(BaseModel):
+    error: str = Field(..., description="Error type identifier")
+    detail: str = Field(..., description="Human-readable error details")
+    status_code: int = Field(..., description="HTTP status code")
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))

@@ -8,6 +8,16 @@ For detailed setup, architecture, and API documentation, please refer to [backen
 
 ---
 
+## 📚 Audit & Integration Deliverables
+
+- **[BACKEND_AUDIT_REPORT.md](file:///Users/charvidesai/Mediator-./Mediator-./BACKEND_AUDIT_REPORT.md)**: Full audit of 8 defect areas (Google ADK runner execution, arbitrary participant generalization, persistent SQLite/Supabase storage, input sanitization, decision validation).
+- **[BACKEND_FIXES.md](file:///Users/charvidesai/Mediator-./Mediator-./BACKEND_FIXES.md)**: Detailed changelog of all architectural and logic repairs.
+- **[API_INTEGRATION_GUIDE.md](file:///Users/charvidesai/Mediator-./Mediator-./API_INTEGRATION_GUIDE.md)**: REST contracts, schemas, TypeScript client, and Figma Make connection guide.
+- **[TEST_RESULTS.md](file:///Users/charvidesai/Mediator-./Mediator-./TEST_RESULTS.md)**: 24 automated pytest tests across 6 categories + live HTTP socket tests.
+- **[openapi.json](file:///Users/charvidesai/Mediator-./Mediator-./openapi.json)**: Exported OpenAPI v3.1 specification for external tools.
+
+---
+
 ## ⚡ Quick Start
 
 ```bash
@@ -20,16 +30,18 @@ pip install -r requirements.txt
 
 # 3. Configure environment
 cp backend/.env.example .env
-# Add your GEMINI_API_KEY if available (optional: fallback mock mode runs automatically)
+# Optional: add your GEMINI_API_KEY if available (fallback deterministic mock mode runs automatically)
 
 # 4. Run the interactive demonstration scenario (Alex, Sam, Taylor)
 python backend/run_scenario.py
 
-# 5. Run test suite
+# 5. Run test suite (24 automated tests across API, DB, AI, Security)
 pytest backend/tests -v
 
 # 6. Start FastAPI dev server
 uvicorn backend.app.main:app --reload --port 8000
 ```
 
-Open interactive Swagger UI at: [http://localhost:8000/docs](http://localhost:8000/docs)
+- **Interactive Swagger UI**: [http://localhost:8000/docs](http://localhost:8000/docs)
+- **Interactive Test UI Console**: [http://localhost:8000/test-ui](http://localhost:8000/test-ui)
+- **Health Check**: [http://localhost:8000/health](http://localhost:8000/health)

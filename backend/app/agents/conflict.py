@@ -8,13 +8,15 @@ Compares individual perspectives produced by Agent 1 to detect:
 - Missing information & dependencies
 
 Distinguishes genuine disagreements from compatible differences and assigns
-severity using strictly documented criteria.
+severity using strictly documented criteria across arbitrary participants.
 """
 
 import json
 import logging
 from typing import Any, Dict, List, Optional
 from google.adk.agents import Agent
+from google.adk.runners import Runner
+from google.adk.sessions import InMemorySessionService
 from google.genai import Client, types
 
 from app.config import settings
@@ -35,9 +37,9 @@ You are the Conflict Detection Agent on an AI Team Alignment Platform.
 Your mission is to objectively compare structured team member perspectives and systematically identify misalignments, contradictions, and information gaps.
 
 Core Responsibilities:
-1. Systematically compare all team members' goals, priorities, responsibilities, and deadlines.
+1. Systematically compare all team members' goals, priorities, responsibilities, and deadlines across all participants.
 2. Detect specific misalignments:
-   - Contradictory Deadlines: When one milestone is scheduled before its required dependency (e.g., Launching Thursday while Frontend finishes Friday).
+   - Contradictory Deadlines: When one milestone is scheduled before its required dependency (e.g. Launching before feature completion).
    - Incompatible Goals: Objectives that cannot simultaneously succeed given current resource/time boundaries.
    - Priority Mismatches: Conflicting urgency or order of operations.
    - Information Gaps: Crucial unstated dependencies (e.g. testing schedule unspecified).
@@ -88,7 +90,7 @@ class ConflictDetectionService:
                 conflicts=[],
                 compatible_differences=["Single team member response or no perspectives provided."],
                 critical_information_gaps=perspective_data.identified_gaps,
-                synthesis_summary="Insufficient perspectives to compare for team alignment.",
+                synthesis_summary="Insufficient perspectives to compare for team alignment (at least 2 teammates required).",
             )
 
         prompt = (
@@ -97,13 +99,45 @@ class ConflictDetectionService:
             f"Identify all contradictions, incompatible deadlines, priority mismatches, and information gaps."
         )
 
-        # If mock mode is forced or no Gemini API key is available, execute deterministic detection
-        if settings.mock_llm or not self.client:
-            logger.info("Using deterministic Conflict Detection logic (mock mode / no API key)")
+        # If mock mode is active or no Gemini API key is configured, run generalized deterministic detection
+        if not settings.is_live_gemini_available:
+            logger.info("Conflict Detection running in deterministic mode (no live Gemini key or mock enabled)")
             return self._mock_detect(perspective_data)
 
-        # Live Gemini execution via google-genai / ADK schema
+        # Live Google ADK / Gemini execution
         try:
+            logger.info(f"Invoking Google ADK Conflict Detection Agent with model: {settings.gemini_model}")
+            if settings.use_adk_runner:
+                session_service = InMemorySessionService()
+                session = await session_service.create_session(
+                    app_name="mediator", user_id="system_coordinator"
+                )
+                runner = Runner(
+                    agent=self.adk_agent,
+                    app_name="mediator",
+                    session_service=session_service,
+                )
+                user_content = types.Content(
+                    role="user",
+                    parts=[types.Part.from_text(text=prompt)],
+                )
+
+                final_text = ""
+                async for event in runner.run_async(
+                    user_id="system_coordinator",
+                    session_id=session.id,
+                    new_message=user_content,
+                ):
+                    if event.is_final_response() and event.content and event.content.parts:
+                        for part in event.content.parts:
+                            if part.text and not getattr(part, "thought", False):
+                                final_text += part.text
+
+                if final_text.strip():
+                    data = json.loads(final_text)
+                    return ConflictDetectionOutput.model_validate(data)
+
+            # Direct fallback if ADK runner stream is empty
             config = types.GenerateContentConfig(
                 system_instruction=CONFLICT_AGENT_INSTRUCTION,
                 response_mime_type="application/json",
@@ -121,7 +155,7 @@ class ConflictDetectionService:
             else:
                 raise ValueError("Empty response received from Gemini model.")
         except Exception as e:
-            logger.error("Error calling Gemini API for Conflict Detection: %s", e)
+            logger.error("Error executing Google ADK / Gemini for Conflict Detection: %s", e)
             if settings.app_env == "development" or settings.mock_llm:
                 logger.warning("Falling back to deterministic conflict detection after error.")
                 return self._mock_detect(perspective_data)
@@ -130,111 +164,180 @@ class ConflictDetectionService:
     def _mock_detect(
         self, perspective_data: PerspectiveAnalysisOutput
     ) -> ConflictDetectionOutput:
-        """Deterministic conflict detection for test scenarios and offline development."""
+        """Generalized deterministic conflict detection for arbitrary participants."""
         conflicts: List[DetectedConflict] = []
         compatible_diffs: List[str] = []
         gaps: List[str] = list(perspective_data.identified_gaps)
 
-        # Collect members and their deadlines/priorities
         perspectives = perspective_data.perspectives
-        member_map = {p.member_name: p for p in perspectives}
+        day_rank = {
+            "monday": 1,
+            "tuesday": 2,
+            "wednesday": 3,
+            "thursday": 4,
+            "friday": 5,
+            "saturday": 6,
+            "sunday": 7,
+        }
 
-        # Check for Thursday vs Friday deadline contradiction (e.g. Sam vs Alex)
-        alex = member_map.get("Alex")
-        sam = member_map.get("Sam")
-        taylor = member_map.get("Taylor")
+        # 1. Dynamic Deadline Collision Search across ALL member pairs
+        conflict_counter = 1
+        for i in range(len(perspectives)):
+            for j in range(i + 1, len(perspectives)):
+                p1 = perspectives[i]
+                p2 = perspectives[j]
 
-        # 1. Timeline Contradiction: Alex (Friday Frontend) vs Sam (Thursday Full Launch)
-        if alex and sam:
-            alex_quote = alex.key_quotes[0] if alex.key_quotes else "Frontend by Friday"
-            sam_quote = sam.key_quotes[0] if sam.key_quotes else "Launch on Thursday"
+                # Check deadline pairs
+                for d1 in p1.deadlines:
+                    for d2 in p2.deadlines:
+                        d1_day = d1.expected_deadline.lower()
+                        d2_day = d2.expected_deadline.lower()
 
-            conflicts.append(
-                DetectedConflict(
-                    conflict_id="CONF-01",
-                    title="Deadline Sequence Inversion: Full Launch Precedes Frontend Completion",
-                    conflict_type=ConflictType.DEADLINE_CONTRADICTION,
-                    category=ConflictCategory.DIRECT_DISAGREEMENT,
-                    severity=ConflictSeverity.HIGH,
-                    severity_reasoning=(
-                        "Logically and physically impossible: Sam expects the entire application "
-                        "to launch on Thursday, but Alex has scheduled frontend completion for Friday. "
-                        "The application cannot launch before its core user interface is ready."
-                    ),
-                    parties_involved=["Alex", "Sam"],
-                    evidence=[
-                        EvidenceItem(
-                            member_name="Alex",
-                            quote=alex_quote,
-                            interpretation="States frontend will be completed by Friday.",
-                        ),
-                        EvidenceItem(
-                            member_name="Sam",
-                            quote=sam_quote,
-                            interpretation="Believes the entire application was agreed to launch on Thursday.",
-                        ),
-                    ],
-                    impact_description=(
-                        "Immediate delivery blocker. Launching on Thursday would mean releasing without "
-                        "a completed frontend, or failing to meet Sam's expected launch date."
-                    ),
-                )
-            )
+                        if d1_day in day_rank and d2_day in day_rank:
+                            rank1 = day_rank[d1_day]
+                            rank2 = day_rank[d2_day]
 
-        # 2. Dependency Gap: Taylor (Testing before launch) vs Sam (Thursday launch without test buffer)
-        if taylor and sam:
-            taylor_quote = taylor.key_quotes[0] if taylor.key_quotes else "Complete testing before launching anything"
-            sam_quote = sam.key_quotes[0] if sam.key_quotes else "Launch the entire application on Thursday"
+                            # Determine if one milestone is launch and the other is development/frontend/testing
+                            is_p1_launch = "launch" in d1.milestone.lower() or "release" in d1.milestone.lower()
+                            is_p2_launch = "launch" in d2.milestone.lower() or "release" in d2.milestone.lower()
 
-            conflicts.append(
-                DetectedConflict(
-                    conflict_id="CONF-02",
-                    title="Unscheduled Quality Assurance Dependency Prior to Launch",
-                    conflict_type=ConflictType.INFORMATION_GAP,
-                    category=ConflictCategory.UNRESOLVED_DEPENDENCY,
-                    severity=ConflictSeverity.MEDIUM,
-                    severity_reasoning=(
-                        "Taylor requires testing to finish before any release, but no testing timeframe, "
-                        "duration, or resource allocation is accounted for in Sam's launch plan."
-                    ),
-                    parties_involved=["Taylor", "Sam"],
-                    evidence=[
-                        EvidenceItem(
-                            member_name="Taylor",
-                            quote=taylor_quote,
-                            interpretation="Requires complete testing as a hard prerequisite before launching anything.",
-                        ),
-                        EvidenceItem(
-                            member_name="Sam",
-                            quote=sam_quote,
-                            interpretation="Plans full application launch for Thursday without explicit testing buffer.",
-                        ),
-                    ],
-                    impact_description=(
-                        "High risk of launching untested features or missing the Thursday launch window "
-                        "once QA begins."
-                    ),
-                )
-            )
+                            # Case A: p1 expects launch before p2 finishes development
+                            if is_p1_launch and not is_p2_launch and rank1 < rank2:
+                                conflicts.append(
+                                    DetectedConflict(
+                                        conflict_id=f"CONF-{conflict_counter:02d}",
+                                        title=f"Deadline Sequence Inversion: {p1.member_name} Launch Precedes {p2.member_name} Completion",
+                                        conflict_type=ConflictType.DEADLINE_CONTRADICTION,
+                                        category=ConflictCategory.DIRECT_DISAGREEMENT,
+                                        severity=ConflictSeverity.HIGH,
+                                        severity_reasoning=(
+                                            f"Logical impossibility: {p1.member_name} expects to launch on {d1.expected_deadline}, "
+                                            f"while {p2.member_name} has scheduled {d2.milestone} for {d2.expected_deadline}. "
+                                            "The deliverable cannot be released before its prerequisite work is completed."
+                                        ),
+                                        parties_involved=[p1.member_name, p2.member_name],
+                                        evidence=[
+                                            EvidenceItem(
+                                                member_name=p1.member_name,
+                                                quote=d1.source_quote,
+                                                interpretation=f"Believes launch/release is scheduled for {d1.expected_deadline}.",
+                                            ),
+                                            EvidenceItem(
+                                                member_name=p2.member_name,
+                                                quote=d2.source_quote,
+                                                interpretation=f"Targeting {d2.milestone} on {d2.expected_deadline}.",
+                                            ),
+                                        ],
+                                        impact_description=(
+                                            f"Direct delivery blocker. Releasing on {d1.expected_deadline} risks shipping incomplete "
+                                            f"functionality or missing the target launch date."
+                                        ),
+                                    )
+                                )
+                                conflict_counter += 1
 
-        # 3. Compatible Differences
-        if alex and taylor:
+                            # Case B: p2 expects launch before p1 finishes development
+                            elif is_p2_launch and not is_p1_launch and rank2 < rank1:
+                                conflicts.append(
+                                    DetectedConflict(
+                                        conflict_id=f"CONF-{conflict_counter:02d}",
+                                        title=f"Deadline Sequence Inversion: {p2.member_name} Launch Precedes {p1.member_name} Completion",
+                                        conflict_type=ConflictType.DEADLINE_CONTRADICTION,
+                                        category=ConflictCategory.DIRECT_DISAGREEMENT,
+                                        severity=ConflictSeverity.HIGH,
+                                        severity_reasoning=(
+                                            f"Logical impossibility: {p2.member_name} expects to launch on {d2.expected_deadline}, "
+                                            f"while {p1.member_name} has scheduled {d1.milestone} for {d1.expected_deadline}. "
+                                            "The deliverable cannot be released before its prerequisite work is completed."
+                                        ),
+                                        parties_involved=[p1.member_name, p2.member_name],
+                                        evidence=[
+                                            EvidenceItem(
+                                                member_name=p1.member_name,
+                                                quote=d1.source_quote,
+                                                interpretation=f"Targeting {d1.milestone} on {d1.expected_deadline}.",
+                                            ),
+                                            EvidenceItem(
+                                                member_name=p2.member_name,
+                                                quote=d2.source_quote,
+                                                interpretation=f"Believes launch/release is scheduled for {d2.expected_deadline}.",
+                                            ),
+                                        ],
+                                        impact_description=(
+                                            f"Direct delivery blocker. Releasing on {d2.expected_deadline} risks shipping incomplete "
+                                            f"functionality or missing the target launch date."
+                                        ),
+                                    )
+                                )
+                                conflict_counter += 1
+
+        # 2. Dynamic Testing / QA Unbudgeted Dependency Detection
+        testers = [p for p in perspectives if any("test" in g.statement.lower() or "qa" in g.statement.lower() for g in p.goals)]
+        launchers = [p for p in perspectives if any("launch" in g.statement.lower() or "release" in g.statement.lower() for g in p.goals)]
+
+        for tester in testers:
+            for launcher in launchers:
+                if tester.member_name != launcher.member_name:
+                    tester_quote = tester.key_quotes[0] if tester.key_quotes else "Complete testing before launch"
+                    launcher_quote = launcher.key_quotes[0] if launcher.key_quotes else "Targeting launch date"
+
+                    # Check if there is already a QA dependency conflict recorded
+                    already_recorded = any(
+                        c.conflict_type == ConflictType.INFORMATION_GAP and tester.member_name in c.parties_involved and launcher.member_name in c.parties_involved
+                        for c in conflicts
+                    )
+                    if not already_recorded:
+                        conflicts.append(
+                            DetectedConflict(
+                                conflict_id=f"CONF-{conflict_counter:02d}",
+                                title=f"Unbudgeted Quality Assurance Dependency Between {tester.member_name} and {launcher.member_name}",
+                                conflict_type=ConflictType.INFORMATION_GAP,
+                                category=ConflictCategory.UNRESOLVED_DEPENDENCY,
+                                severity=ConflictSeverity.MEDIUM,
+                                severity_reasoning=(
+                                    f"{tester.member_name} requires testing to finish before release, but no testing timeframe "
+                                    f"or buffer is explicitly allocated in {launcher.member_name}'s launch expectations."
+                                ),
+                                parties_involved=[tester.member_name, launcher.member_name],
+                                evidence=[
+                                    EvidenceItem(
+                                        member_name=tester.member_name,
+                                        quote=tester_quote,
+                                        interpretation="States that complete testing is a mandatory prerequisite prior to release.",
+                                    ),
+                                    EvidenceItem(
+                                        member_name=launcher.member_name,
+                                        quote=launcher_quote,
+                                        interpretation="Expects application launch without explicit testing window allocation.",
+                                    ),
+                                ],
+                                impact_description="High risk of launching untested features or missing the target launch window when defects arise.",
+                            )
+                        )
+                        conflict_counter += 1
+
+        # 3. Dynamic Compatible Differences
+        if len(perspectives) >= 2:
+            roles = [p.member_name for p in perspectives]
             compatible_diffs.append(
-                "Alex's focus on frontend delivery and Taylor's focus on comprehensive testing are compatible, "
-                "provided frontend deliverables are handed off to Taylor in a staged testing pipeline."
+                f"Teammates ({', '.join(roles)}) share a common commitment to project success; individual differences "
+                "in functional focus (e.g. implementation vs quality assurance vs scheduling) are complementary when aligned into a staged delivery workflow."
             )
 
         # 4. Critical Information Gaps
-        gaps.append("Duration and scope of testing (smoke tests vs full regression) are undefined.")
-        gaps.append("Backend completion status and integration milestones were not mentioned by any teammate.")
+        if not any(d for p in perspectives for d in p.deadlines if "test" in d.milestone.lower()):
+            gaps.append("Calendar duration and specific dates for testing/QA sign-off remain undefined.")
+        if not any(d for p in perspectives for d in p.deadlines if "backend" in d.milestone.lower()):
+            gaps.append("Backend integration and deployment milestones were not explicitly specified in member statements.")
+
+        synthesis_summary = (
+            f"Detected {len(conflicts)} alignment issue(s) across {len(perspectives)} participants. "
+            + (f"Identified {len([c for c in conflicts if c.severity == ConflictSeverity.HIGH])} blocking deadline contradiction(s)." if conflicts else "No severe contradictions detected.")
+        )
 
         return ConflictDetectionOutput(
             conflicts=conflicts,
             compatible_differences=compatible_diffs,
             critical_information_gaps=gaps,
-            synthesis_summary=(
-                f"Detected {len(conflicts)} core misalignment(s): a critical deadline clash "
-                "between Alex and Sam (Friday frontend vs Thursday launch), and an unaddressed "
-                "testing dependency raised by Taylor."
-            ),
+            synthesis_summary=synthesis_summary,
         )

@@ -1,4 +1,4 @@
-from typing import List, Optional
+from typing import List, Literal, Optional
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -8,7 +8,7 @@ class Settings(BaseSettings):
 
     # Project metadata
     project_name: str = "AI Team Alignment Platform"
-    version: str = "0.1.0"
+    version: str = "0.2.0"
     api_prefix: str = "/api"
     app_env: str = Field(default="development", alias="APP_ENV")
     debug: bool = Field(default=True, alias="DEBUG")
@@ -20,22 +20,30 @@ class Settings(BaseSettings):
     agent_temperature: float = Field(default=0.2, alias="AGENT_TEMPERATURE")
     max_retries: int = Field(default=3, alias="MAX_RETRIES")
 
-    # Supabase Settings (for persistent database storage in Phase 3)
+    # Execution Mode: Auto (Gemini if key exists, else mock), Live, or Mock
+    mock_llm: bool = Field(default=False, alias="MOCK_LLM")
+    use_adk_runner: bool = Field(default=True, alias="USE_ADK_RUNNER")
+
+    # Storage Backend Configuration: "sqlite" (default persistent), "supabase", or "memory"
+    storage_backend: Literal["sqlite", "supabase", "memory"] = Field(
+        default="sqlite", alias="STORAGE_BACKEND"
+    )
+    sqlite_db_path: str = Field(default="data/mediator.db", alias="SQLITE_DB_PATH")
+
+    # Supabase Settings (for remote Supabase PostgreSQL integration)
     supabase_url: Optional[str] = Field(default=None, alias="SUPABASE_URL")
     supabase_key: Optional[str] = Field(default=None, alias="SUPABASE_KEY")
     supabase_service_role_key: Optional[str] = Field(default=None, alias="SUPABASE_SERVICE_ROLE_KEY")
 
-    # CORS Settings (configured for eventual frontend integration)
+    # Authentication & Security
+    auth_enabled: bool = Field(default=False, alias="AUTH_ENABLED")
+    api_secret_key: str = Field(default="dev-mediator-key-123", alias="API_SECRET_KEY")
+
+    # CORS Settings (configured for external Figma Make wireframe / frontend)
     cors_origins: List[str] = Field(
-        default=["http://localhost:3000", "http://localhost:5173", "*"],
+        default=["http://localhost:3000", "http://localhost:5173", "http://localhost:8000", "*"],
         alias="CORS_ORIGINS",
     )
-
-    # Security & Project Authorization
-    api_secret_key: str = Field(default="dev-insecure-secret-key-change-in-prod", alias="API_SECRET_KEY")
-
-    # Mock mode option for deterministic testing / offline development
-    mock_llm: bool = Field(default=False, alias="MOCK_LLM")
 
     model_config = SettingsConfigDict(
         env_file=".env",
@@ -47,6 +55,11 @@ class Settings(BaseSettings):
     def active_api_key(self) -> Optional[str]:
         """Returns the active Gemini / Google API key if configured."""
         return self.gemini_api_key or self.google_api_key
+
+    @property
+    def is_live_gemini_available(self) -> bool:
+        """Indicates whether real Gemini execution is available."""
+        return bool(self.active_api_key) and not self.mock_llm
 
 
 settings = Settings()

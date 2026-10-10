@@ -1,0 +1,1741 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "AI Team Alignment Platform",
+    "description": "Backend and Multi-Agent AI system for team alignment, hidden disagreement detection, and collaborative consensus synthesis using Google ADK and Gemini.",
+    "version": "0.2.0"
+  },
+  "paths": {
+    "/api/projects": {
+      "get": {
+        "tags": [
+          "Projects"
+        ],
+        "summary": "List Projects",
+        "description": "List all projects.",
+        "operationId": "list_projects_api_projects_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/Project"
+                  },
+                  "type": "array",
+                  "title": "Response List Projects Api Projects Get"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Projects"
+        ],
+        "summary": "Create Project",
+        "description": "Create a new project workspace for team alignment.",
+        "operationId": "create_project_api_projects_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProjectCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Project"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/APIErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/projects/{project_id}": {
+      "get": {
+        "tags": [
+          "Projects"
+        ],
+        "summary": "Get Project",
+        "description": "Retrieve details for a specific project by ID.",
+        "operationId": "get_project_api_projects__project_id__get",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Project Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Project"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/APIErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/projects/{project_id}/members": {
+      "post": {
+        "tags": [
+          "Projects"
+        ],
+        "summary": "Add Team Member",
+        "description": "Add a new team member to an existing project.",
+        "operationId": "add_team_member_api_projects__project_id__members_post",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Project Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TeamMemberCreate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TeamMember"
+                }
+              }
+            }
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/APIErrorResponse"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/APIErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/APIErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/projects/{project_id}/responses": {
+      "post": {
+        "tags": [
+          "Responses"
+        ],
+        "summary": "Submit Response",
+        "description": "Submit an individual teammate's perspectives, priorities, or expectations.",
+        "operationId": "submit_response_api_projects__project_id__responses_post",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Project Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MemberResponseSubmit"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MemberResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/APIErrorResponse"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/APIErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "tags": [
+          "Responses"
+        ],
+        "summary": "List Responses",
+        "description": "Retrieve all submitted responses for a project.",
+        "operationId": "list_responses_api_projects__project_id__responses_get",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Project Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/MemberResponse"
+                  },
+                  "title": "Response List Responses Api Projects  Project Id  Responses Get"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/APIErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/projects/{project_id}/analyze": {
+      "post": {
+        "tags": [
+          "Analysis"
+        ],
+        "summary": "Trigger Analysis",
+        "description": "Trigger the multi-agent alignment workflow (Perspective -> Conflict -> Resolution).\n\nCoordinates:\n- Agent 1: Extracts structured goals, priorities, responsibilities, and deadlines.\n- Agent 2: Identifies contradictory dates, priority mismatches, and information gaps.\n- Agent 3: Proposes actionable compromises, leaving decisions strictly for human approval.",
+        "operationId": "trigger_analysis_api_projects__project_id__analyze_post",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Project Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AlignmentWorkflowResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/APIErrorResponse"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/APIErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/APIErrorResponse"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/projects/{project_id}/alignment": {
+      "get": {
+        "tags": [
+          "Analysis"
+        ],
+        "summary": "Get Alignment Report",
+        "description": "Retrieve the latest alignment synthesis report for a project.",
+        "operationId": "get_alignment_report_api_projects__project_id__alignment_get",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Project Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SynthesisReport"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/APIErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/projects/{project_id}/decisions": {
+      "post": {
+        "tags": [
+          "Decisions"
+        ],
+        "summary": "Record Decision",
+        "description": "Approve, reject, or modify an AI-proposed resolution into an official project commitment.\n\nOnly human-approved actions transition an AI proposal into an official project commitment.\nValidates that the resolution_id exists in the project's latest analysis report.",
+        "operationId": "record_decision_api_projects__project_id__decisions_post",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Project Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DecisionActionRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConfirmedDecision"
+                }
+              }
+            }
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/APIErrorResponse"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/APIErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "tags": [
+          "Decisions"
+        ],
+        "summary": "List Decisions",
+        "description": "Retrieve all confirmed human decisions and project commitments.",
+        "operationId": "list_decisions_api_projects__project_id__decisions_get",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Project Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/ConfirmedDecision"
+                  },
+                  "title": "Response List Decisions Api Projects  Project Id  Decisions Get"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/APIErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/": {
+      "get": {
+        "tags": [
+          "Health"
+        ],
+        "summary": "Root",
+        "description": "Root status endpoint with API links.",
+        "operationId": "root__get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/health": {
+      "get": {
+        "tags": [
+          "Health"
+        ],
+        "summary": "Health Check",
+        "description": "Health check endpoint for container orchestrators and monitoring.",
+        "operationId": "health_check_health_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/test-ui": {
+      "get": {
+        "tags": [
+          "Test Harness"
+        ],
+        "summary": "Serve Test Ui",
+        "description": "Serves the minimal dummy frontend test harness.",
+        "operationId": "serve_test_ui_test_ui_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response"
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "APIErrorResponse": {
+        "properties": {
+          "error": {
+            "type": "string",
+            "title": "Error",
+            "description": "Error type identifier"
+          },
+          "detail": {
+            "type": "string",
+            "title": "Detail",
+            "description": "Human-readable error details"
+          },
+          "status_code": {
+            "type": "integer",
+            "title": "Status Code",
+            "description": "HTTP status code"
+          },
+          "timestamp": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Timestamp"
+          }
+        },
+        "type": "object",
+        "required": [
+          "error",
+          "detail",
+          "status_code"
+        ],
+        "title": "APIErrorResponse"
+      },
+      "AlignmentWorkflowResult": {
+        "properties": {
+          "workflow_id": {
+            "type": "string",
+            "title": "Workflow Id",
+            "description": "Unique execution ID"
+          },
+          "project_id": {
+            "type": "string",
+            "title": "Project Id",
+            "description": "Project ID"
+          },
+          "perspectives_output": {
+            "$ref": "#/components/schemas/PerspectiveAnalysisOutput",
+            "description": "Output from Agent 1 (Perspective)"
+          },
+          "conflicts_output": {
+            "$ref": "#/components/schemas/ConflictDetectionOutput",
+            "description": "Output from Agent 2 (Conflict)"
+          },
+          "synthesis_output": {
+            "$ref": "#/components/schemas/SynthesisReport",
+            "description": "Output from Agent 3 (Resolution)"
+          },
+          "intermediate_results": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Intermediate Results",
+            "description": "Raw intermediate results for debugging and traceability"
+          },
+          "execution_metadata": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Execution Metadata",
+            "description": "Execution timing, model used, and trace metadata"
+          },
+          "execution_mode": {
+            "type": "string",
+            "title": "Execution Mode",
+            "description": "Explicit indicator: 'LIVE_GEMINI' or 'MOCK_DETERMINISTIC'",
+            "default": "MOCK_DETERMINISTIC"
+          }
+        },
+        "type": "object",
+        "required": [
+          "workflow_id",
+          "project_id",
+          "perspectives_output",
+          "conflicts_output",
+          "synthesis_output"
+        ],
+        "title": "AlignmentWorkflowResult"
+      },
+      "ConfirmedDecision": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id",
+            "description": "Unique decision ID"
+          },
+          "project_id": {
+            "type": "string",
+            "title": "Project Id",
+            "description": "Project ID"
+          },
+          "resolution_id": {
+            "type": "string",
+            "title": "Resolution Id",
+            "description": "Resolution ID that this decision was based on"
+          },
+          "status": {
+            "$ref": "#/components/schemas/DecisionStatus",
+            "description": "Final status (APPROVED, REJECTED, MODIFIED)"
+          },
+          "decision_text": {
+            "type": "string",
+            "title": "Decision Text",
+            "description": "Official binding team commitment text"
+          },
+          "decided_by": {
+            "type": "string",
+            "title": "Decided By",
+            "description": "Team member who recorded the decision"
+          },
+          "decided_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Decided At"
+          },
+          "notes": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Notes"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "project_id",
+          "resolution_id",
+          "status",
+          "decision_text",
+          "decided_by"
+        ],
+        "title": "ConfirmedDecision"
+      },
+      "ConflictCategory": {
+        "type": "string",
+        "enum": [
+          "DIRECT_DISAGREEMENT",
+          "COMPATIBLE_DIFFERENCE",
+          "UNRESOLVED_DEPENDENCY"
+        ],
+        "title": "ConflictCategory"
+      },
+      "ConflictDetectionOutput": {
+        "properties": {
+          "conflicts": {
+            "items": {
+              "$ref": "#/components/schemas/DetectedConflict"
+            },
+            "type": "array",
+            "title": "Conflicts",
+            "description": "List of detected conflicts and misalignments"
+          },
+          "compatible_differences": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Compatible Differences",
+            "description": "Differences in focus or emphasis that are compatible and not in conflict"
+          },
+          "critical_information_gaps": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Critical Information Gaps",
+            "description": "Missing facts or prerequisites that prevent clear decision-making (e.g. testing duration)"
+          },
+          "synthesis_summary": {
+            "type": "string",
+            "title": "Synthesis Summary",
+            "description": "High-level summary of the team's alignment status"
+          }
+        },
+        "type": "object",
+        "required": [
+          "conflicts",
+          "synthesis_summary"
+        ],
+        "title": "ConflictDetectionOutput"
+      },
+      "ConflictSeverity": {
+        "type": "string",
+        "enum": [
+          "HIGH",
+          "MEDIUM",
+          "LOW"
+        ],
+        "title": "ConflictSeverity"
+      },
+      "ConflictType": {
+        "type": "string",
+        "enum": [
+          "DEADLINE_CONTRADICTION",
+          "GOAL_INCOMPATIBILITY",
+          "PRIORITY_MISMATCH",
+          "RESPONSIBILITY_OVERLAP_OR_GAP",
+          "INFORMATION_GAP",
+          "PROCESS_MISALIGNMENT"
+        ],
+        "title": "ConflictType"
+      },
+      "DeadlineItem": {
+        "properties": {
+          "milestone": {
+            "type": "string",
+            "title": "Milestone",
+            "description": "Milestone or task deadline refers to"
+          },
+          "expected_deadline": {
+            "type": "string",
+            "title": "Expected Deadline",
+            "description": "Deadline date/timeframe mentioned (e.g. 'Thursday', 'Friday')"
+          },
+          "is_tentative": {
+            "type": "boolean",
+            "title": "Is Tentative",
+            "description": "Whether the member phrased this as an assumption or tentative",
+            "default": false
+          },
+          "source_quote": {
+            "type": "string",
+            "title": "Source Quote",
+            "description": "Verbatim statement containing the deadline"
+          }
+        },
+        "type": "object",
+        "required": [
+          "milestone",
+          "expected_deadline",
+          "source_quote"
+        ],
+        "title": "DeadlineItem"
+      },
+      "DecisionActionRequest": {
+        "properties": {
+          "resolution_id": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Resolution Id",
+            "description": "ID of the resolution to act upon"
+          },
+          "action": {
+            "type": "string",
+            "enum": [
+              "APPROVE",
+              "REJECT",
+              "MODIFY"
+            ],
+            "title": "Action",
+            "description": "Action to take"
+          },
+          "decision_text": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Decision Text",
+            "description": "Official agreed commitment text (required if MODIFY or if customized)"
+          },
+          "decided_by": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Decided By",
+            "description": "Name or ID of team member approving/rejecting"
+          },
+          "notes": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Notes",
+            "description": "Notes on why the decision was taken"
+          }
+        },
+        "type": "object",
+        "required": [
+          "resolution_id",
+          "action",
+          "decided_by"
+        ],
+        "title": "DecisionActionRequest"
+      },
+      "DecisionStatus": {
+        "type": "string",
+        "enum": [
+          "PROPOSED",
+          "APPROVED",
+          "REJECTED",
+          "MODIFIED"
+        ],
+        "title": "DecisionStatus"
+      },
+      "DetectedConflict": {
+        "properties": {
+          "conflict_id": {
+            "type": "string",
+            "title": "Conflict Id",
+            "description": "Unique identifier for the conflict (e.g. 'CONF-1')"
+          },
+          "title": {
+            "type": "string",
+            "title": "Title",
+            "description": "Short descriptive title of the conflict"
+          },
+          "conflict_type": {
+            "$ref": "#/components/schemas/ConflictType",
+            "description": "Categorization of the conflict type"
+          },
+          "category": {
+            "$ref": "#/components/schemas/ConflictCategory",
+            "description": "Whether this is a direct disagreement or compatible difference"
+          },
+          "severity": {
+            "$ref": "#/components/schemas/ConflictSeverity",
+            "description": "Assigned severity rating"
+          },
+          "severity_reasoning": {
+            "type": "string",
+            "title": "Severity Reasoning",
+            "description": "Documented rationale explaining why this severity was assigned"
+          },
+          "parties_involved": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Parties Involved",
+            "description": "List of member names whose statements are in conflict"
+          },
+          "evidence": {
+            "items": {
+              "$ref": "#/components/schemas/EvidenceItem"
+            },
+            "type": "array",
+            "title": "Evidence",
+            "description": "Citations and original quotes supporting this finding"
+          },
+          "impact_description": {
+            "type": "string",
+            "title": "Impact Description",
+            "description": "Potential impact on the project if left unresolved"
+          }
+        },
+        "type": "object",
+        "required": [
+          "conflict_id",
+          "title",
+          "conflict_type",
+          "category",
+          "severity",
+          "severity_reasoning",
+          "parties_involved",
+          "evidence",
+          "impact_description"
+        ],
+        "title": "DetectedConflict"
+      },
+      "EvidenceItem": {
+        "properties": {
+          "member_name": {
+            "type": "string",
+            "title": "Member Name",
+            "description": "Team member who made the statement"
+          },
+          "quote": {
+            "type": "string",
+            "title": "Quote",
+            "description": "Exact verbatim quote from the member's input"
+          },
+          "interpretation": {
+            "type": "string",
+            "title": "Interpretation",
+            "description": "Factual interpretation of what the quote asserts"
+          }
+        },
+        "type": "object",
+        "required": [
+          "member_name",
+          "quote",
+          "interpretation"
+        ],
+        "title": "EvidenceItem"
+      },
+      "ExtractedPerspective": {
+        "properties": {
+          "member_name": {
+            "type": "string",
+            "title": "Member Name",
+            "description": "Name of the team member"
+          },
+          "goals": {
+            "items": {
+              "$ref": "#/components/schemas/GoalItem"
+            },
+            "type": "array",
+            "title": "Goals",
+            "description": "Extracted project goals"
+          },
+          "priorities": {
+            "items": {
+              "$ref": "#/components/schemas/PriorityItem"
+            },
+            "type": "array",
+            "title": "Priorities",
+            "description": "Extracted priorities"
+          },
+          "responsibilities": {
+            "items": {
+              "$ref": "#/components/schemas/ResponsibilityItem"
+            },
+            "type": "array",
+            "title": "Responsibilities",
+            "description": "Identified responsibilities"
+          },
+          "deadlines": {
+            "items": {
+              "$ref": "#/components/schemas/DeadlineItem"
+            },
+            "type": "array",
+            "title": "Deadlines",
+            "description": "Expected deadlines or timelines"
+          },
+          "ambiguities_or_missing_details": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Ambiguities Or Missing Details",
+            "description": "Missing details, unstated dependencies, or ambiguous points that are NOT invented"
+          },
+          "key_quotes": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Key Quotes",
+            "description": "Key verbatim quotes from the member"
+          }
+        },
+        "type": "object",
+        "required": [
+          "member_name"
+        ],
+        "title": "ExtractedPerspective"
+      },
+      "GoalItem": {
+        "properties": {
+          "statement": {
+            "type": "string",
+            "title": "Statement",
+            "description": "Project goal identified from the member's response"
+          },
+          "source_quote": {
+            "type": "string",
+            "title": "Source Quote",
+            "description": "Exact quote from the member supporting this goal"
+          },
+          "clarity": {
+            "type": "string",
+            "enum": [
+              "CLEAR",
+              "AMBIGUOUS",
+              "INFERRED"
+            ],
+            "title": "Clarity",
+            "description": "Clarity level of the stated goal",
+            "default": "CLEAR"
+          }
+        },
+        "type": "object",
+        "required": [
+          "statement",
+          "source_quote"
+        ],
+        "title": "GoalItem"
+      },
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "type": "array",
+            "title": "Detail"
+          }
+        },
+        "type": "object",
+        "title": "HTTPValidationError"
+      },
+      "MemberResponse": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id",
+            "description": "Unique response ID"
+          },
+          "project_id": {
+            "type": "string",
+            "title": "Project Id",
+            "description": "Associated project ID"
+          },
+          "member_name": {
+            "type": "string",
+            "title": "Member Name",
+            "description": "Name of the team member"
+          },
+          "raw_text": {
+            "type": "string",
+            "title": "Raw Text",
+            "description": "Unstructured response or viewpoint"
+          },
+          "source": {
+            "type": "string",
+            "title": "Source",
+            "default": "direct_submission"
+          },
+          "submitted_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Submitted At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "project_id",
+          "member_name",
+          "raw_text"
+        ],
+        "title": "MemberResponse"
+      },
+      "MemberResponseSubmit": {
+        "properties": {
+          "member_name": {
+            "type": "string",
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Member Name",
+            "description": "Name of the team member submitting perspective"
+          },
+          "raw_text": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Raw Text",
+            "description": "Unstructured response or viewpoint from the teammate"
+          },
+          "source": {
+            "type": "string",
+            "title": "Source",
+            "description": "Source of submission (e.g. form, slack, direct)",
+            "default": "direct_submission"
+          }
+        },
+        "type": "object",
+        "required": [
+          "member_name",
+          "raw_text"
+        ],
+        "title": "MemberResponseSubmit"
+      },
+      "PerspectiveAnalysisOutput": {
+        "properties": {
+          "perspectives": {
+            "items": {
+              "$ref": "#/components/schemas/ExtractedPerspective"
+            },
+            "type": "array",
+            "title": "Perspectives",
+            "description": "List of structured perspectives for each team member"
+          },
+          "total_members_analyzed": {
+            "type": "integer",
+            "title": "Total Members Analyzed",
+            "description": "Count of members analyzed",
+            "default": 0
+          },
+          "overall_summary": {
+            "type": "string",
+            "title": "Overall Summary",
+            "description": "Concise objective summary of all individual inputs"
+          },
+          "identified_gaps": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Identified Gaps",
+            "description": "Cross-cutting areas where information was completely missing from all members"
+          }
+        },
+        "type": "object",
+        "required": [
+          "perspectives",
+          "overall_summary"
+        ],
+        "title": "PerspectiveAnalysisOutput"
+      },
+      "PriorityItem": {
+        "properties": {
+          "priority_item": {
+            "type": "string",
+            "title": "Priority Item",
+            "description": "Priority or top concern expressed"
+          },
+          "urgency_level": {
+            "type": "string",
+            "enum": [
+              "CRITICAL",
+              "HIGH",
+              "NORMAL",
+              "LOW"
+            ],
+            "title": "Urgency Level",
+            "description": "Expressed urgency",
+            "default": "HIGH"
+          },
+          "source_quote": {
+            "type": "string",
+            "title": "Source Quote",
+            "description": "Verbatim statement showing priority"
+          }
+        },
+        "type": "object",
+        "required": [
+          "priority_item",
+          "source_quote"
+        ],
+        "title": "PriorityItem"
+      },
+      "Project": {
+        "properties": {
+          "title": {
+            "type": "string",
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Title",
+            "description": "Project name"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 1000
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description",
+            "description": "Project goals and overview"
+          },
+          "id": {
+            "type": "string",
+            "title": "Id",
+            "description": "Unique project ID"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          },
+          "members": {
+            "items": {
+              "$ref": "#/components/schemas/TeamMember"
+            },
+            "type": "array",
+            "title": "Members"
+          }
+        },
+        "type": "object",
+        "required": [
+          "title",
+          "id"
+        ],
+        "title": "Project"
+      },
+      "ProjectCreate": {
+        "properties": {
+          "title": {
+            "type": "string",
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Title",
+            "description": "Project name"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 1000
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description",
+            "description": "Project goals and overview"
+          }
+        },
+        "type": "object",
+        "required": [
+          "title"
+        ],
+        "title": "ProjectCreate"
+      },
+      "ProposedResolution": {
+        "properties": {
+          "resolution_id": {
+            "type": "string",
+            "title": "Resolution Id",
+            "description": "Unique ID for this resolution (e.g. 'RES-1')"
+          },
+          "conflict_id": {
+            "type": "string",
+            "title": "Conflict Id",
+            "description": "Reference to the conflict being addressed"
+          },
+          "conflict_title": {
+            "type": "string",
+            "title": "Conflict Title",
+            "description": "Title of the corresponding conflict"
+          },
+          "recommended_solution": {
+            "type": "string",
+            "title": "Recommended Solution",
+            "description": "Primary recommended compromise or solution"
+          },
+          "reasoning": {
+            "type": "string",
+            "title": "Reasoning",
+            "description": "Clear explanation of the reasoning behind this recommendation"
+          },
+          "alternative_options": {
+            "items": {
+              "$ref": "#/components/schemas/ResolutionOption"
+            },
+            "type": "array",
+            "title": "Alternative Options",
+            "description": "Alternative options for the team to consider"
+          },
+          "impacted_members": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Impacted Members",
+            "description": "Members who must agree or be consulted"
+          },
+          "unresolved_questions_for_team": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Unresolved Questions For Team",
+            "description": "Specific questions the team must answer to finalize a decision"
+          },
+          "status": {
+            "type": "string",
+            "const": "PROPOSED",
+            "title": "Status",
+            "description": "Status is strictly PROPOSED until approved by human team members",
+            "default": "PROPOSED"
+          }
+        },
+        "type": "object",
+        "required": [
+          "resolution_id",
+          "conflict_id",
+          "conflict_title",
+          "recommended_solution",
+          "reasoning",
+          "impacted_members",
+          "unresolved_questions_for_team"
+        ],
+        "title": "ProposedResolution"
+      },
+      "ResolutionOption": {
+        "properties": {
+          "option_id": {
+            "type": "string",
+            "title": "Option Id",
+            "description": "Identifier for option (e.g. 'OPT-A')"
+          },
+          "title": {
+            "type": "string",
+            "title": "Title",
+            "description": "Short title of the proposed approach"
+          },
+          "description": {
+            "type": "string",
+            "title": "Description",
+            "description": "Detailed description of this solution"
+          },
+          "pros": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Pros",
+            "description": "Advantages of this option"
+          },
+          "cons": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Cons",
+            "description": "Disadvantages or trade-offs"
+          },
+          "compromise_notes": {
+            "type": "string",
+            "title": "Compromise Notes",
+            "description": "How this accommodates different members' perspectives"
+          }
+        },
+        "type": "object",
+        "required": [
+          "option_id",
+          "title",
+          "description",
+          "pros",
+          "cons",
+          "compromise_notes"
+        ],
+        "title": "ResolutionOption"
+      },
+      "ResponsibilityItem": {
+        "properties": {
+          "responsibility": {
+            "type": "string",
+            "title": "Responsibility",
+            "description": "Responsibility or task mentioned"
+          },
+          "assigned_to": {
+            "type": "string",
+            "title": "Assigned To",
+            "description": "Who the member believes is responsible"
+          },
+          "source_quote": {
+            "type": "string",
+            "title": "Source Quote",
+            "description": "Verbatim statement from the member"
+          }
+        },
+        "type": "object",
+        "required": [
+          "responsibility",
+          "assigned_to",
+          "source_quote"
+        ],
+        "title": "ResponsibilityItem"
+      },
+      "SynthesisReport": {
+        "properties": {
+          "report_id": {
+            "type": "string",
+            "title": "Report Id",
+            "description": "Unique synthesis report ID"
+          },
+          "project_id": {
+            "type": "string",
+            "title": "Project Id",
+            "description": "Associated project ID",
+            "default": ""
+          },
+          "executive_summary": {
+            "type": "string",
+            "title": "Executive Summary",
+            "description": "Executive summary of the alignment situation"
+          },
+          "alignment_score": {
+            "type": "number",
+            "maximum": 100.0,
+            "minimum": 0.0,
+            "title": "Alignment Score",
+            "description": "Estimated alignment index (0-100, where 100 is perfectly aligned)"
+          },
+          "key_findings": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Key Findings",
+            "description": "Key findings from the multi-agent analysis"
+          },
+          "proposed_resolutions": {
+            "items": {
+              "$ref": "#/components/schemas/ProposedResolution"
+            },
+            "type": "array",
+            "title": "Proposed Resolutions",
+            "description": "Proposed solutions for team discussion"
+          },
+          "human_action_items": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Human Action Items",
+            "description": "Explicit actions and decisions required from human teammates"
+          },
+          "disclaimer": {
+            "type": "string",
+            "title": "Disclaimer",
+            "description": "Governance notice stating proposals are not final decisions",
+            "default": "All resolutions are AI-generated proposals and require explicit human team approval before becoming commitments."
+          },
+          "generated_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Generated At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "report_id",
+          "executive_summary",
+          "alignment_score",
+          "key_findings",
+          "proposed_resolutions",
+          "human_action_items"
+        ],
+        "title": "SynthesisReport"
+      },
+      "TeamMember": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Name",
+            "description": "Full name or alias of the team member"
+          },
+          "role": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 100
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Role",
+            "description": "Role in team (e.g. Frontend, Backend, PM, QA)"
+          },
+          "email": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 200
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Email",
+            "description": "Optional email address"
+          },
+          "id": {
+            "type": "string",
+            "title": "Id",
+            "description": "Unique ID for team member"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "id"
+        ],
+        "title": "TeamMember"
+      },
+      "TeamMemberCreate": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Name",
+            "description": "Full name or alias of the team member"
+          },
+          "role": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 100
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Role",
+            "description": "Role in team (e.g. Frontend, Backend, PM, QA)"
+          },
+          "email": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 200
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Email",
+            "description": "Optional email address"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name"
+        ],
+        "title": "TeamMemberCreate"
+      },
+      "ValidationError": {
+        "properties": {
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "type": "array",
+            "title": "Location"
+          },
+          "msg": {
+            "type": "string",
+            "title": "Message"
+          },
+          "type": {
+            "type": "string",
+            "title": "Error Type"
+          },
+          "input": {
+            "title": "Input"
+          },
+          "ctx": {
+            "type": "object",
+            "title": "Context"
+          }
+        },
+        "type": "object",
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError"
+      }
+    }
+  }
+}

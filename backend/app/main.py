@@ -5,20 +5,32 @@ Provides:
 - OpenAPI interactive documentation at /docs and /redoc.
 - Configurable CORS support for decoupled frontend and Slack bots.
 - Modular separation between routes, agents, workflows, and persistence.
+- Built-in test UI harness served at /test-ui for API verification before Figma Make integration.
 """
 
 from contextlib import asynccontextmanager
 import logging
-from fastapi import FastAPI
+import os
+import sys
+
+# Ensure backend root is on sys.path so 'import app' resolves when run as backend.app.main:app
+_backend_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if _backend_dir not in sys.path:
+    sys.path.insert(0, _backend_dir)
+
+from fastapi import FastAPI, Request, status
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse, JSONResponse
 
 from app.config import settings
+from app.models.schemas import APIErrorResponse
 from app.routes import (
     analysis_router,
     decisions_router,
     projects_router,
     responses_router,
 )
+from app.services.supabase import storage_service
 
 # Configure logging
 logging.basicConfig(
@@ -33,10 +45,15 @@ async def lifespan(app: FastAPI):
     """Application startup and shutdown events."""
     logger.info(f"Starting {settings.project_name} v{settings.version}")
     logger.info(f"Using Gemini Model: {settings.gemini_model}")
+    logger.info(f"Storage Backend: {settings.storage_backend}")
+
+    # Initialize persistent storage tables
+    await storage_service.initialize()
+
     if settings.active_api_key:
-        logger.info("Gemini API key is configured.")
+        logger.info("Gemini API key is configured. Live agent execution available.")
     else:
-        logger.warning("No Gemini API key configured. Agent services will run in high-fidelity mock mode.")
+        logger.info("No Gemini API key configured. Agent services running in deterministic mock mode.")
     yield
     logger.info(f"Shutting down {settings.project_name}")
 
@@ -63,6 +80,22 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
+# Global unhandled exception handler
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    logger.error(f"Unhandled exception on {request.method} {request.url.path}: {exc}", exc_info=True)
+    error_payload = APIErrorResponse(
+        error=type(exc).__name__,
+        detail=str(exc) or "Internal server error occurred.",
+        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+    )
+    return JSONResponse(
+        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        content=error_payload.model_dump(mode="json"),
+    )
+
+
 # Mount API routers
 app.include_router(projects_router, prefix=settings.api_prefix)
 app.include_router(responses_router, prefix=settings.api_prefix)
@@ -79,7 +112,9 @@ async def root():
         "status": "online",
         "docs_url": "/docs",
         "redoc_url": "/redoc",
+        "test_ui_url": "/test-ui",
         "api_prefix": settings.api_prefix,
+        "storage_backend": settings.storage_backend,
     }
 
 
@@ -90,7 +125,21 @@ async def health_check():
         "status": "healthy",
         "model": settings.gemini_model,
         "api_key_configured": bool(settings.active_api_key),
+        "storage_backend": settings.storage_backend,
+        "auth_enabled": settings.auth_enabled,
     }
+
+
+@app.get("/test-ui", tags=["Test Harness"], response_class=FileResponse)
+async def serve_test_ui():
+    """Serves the minimal dummy frontend test harness."""
+    ui_path = os.path.join(os.path.dirname(__file__), "..", "dummy_frontend", "index.html")
+    if os.path.exists(ui_path):
+        return FileResponse(ui_path, media_type="text/html")
+    return JSONResponse(
+        status_code=404,
+        content={"detail": "Dummy frontend test file not found."},
+    )
 
 
 if __name__ == "__main__":

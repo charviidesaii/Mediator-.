@@ -1,0 +1,548 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Mediator — Test Harness (Dummy Frontend)</title>
+  <style>
+    :root {
+      --bg: #0f172a;
+      --card-bg: #1e293b;
+      --border: #334155;
+      --text: #f8fafc;
+      --muted: #94a3b8;
+      --accent: #38bdf8;
+      --accent-hover: #0284c7;
+      --success: #22c55e;
+      --danger: #ef4444;
+      --warning: #f59e0b;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, monospace;
+      background: var(--bg);
+      color: var(--text);
+      padding: 24px;
+      line-height: 1.5;
+    }
+    header {
+      border-bottom: 1px solid var(--border);
+      padding-bottom: 16px;
+      margin-bottom: 24px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 16px;
+    }
+    h1 { font-size: 1.5rem; color: var(--accent); }
+    .badge {
+      display: inline-block;
+      padding: 4px 10px;
+      border-radius: 9999px;
+      font-size: 0.8rem;
+      font-weight: bold;
+    }
+    .badge-online { background: #064e3b; color: var(--success); border: 1px solid var(--success); }
+    .badge-offline { background: #7f1d1d; color: var(--danger); border: 1px solid var(--danger); }
+    
+    .config-bar {
+      display: flex;
+      gap: 12px;
+      align-items: center;
+      background: var(--card-bg);
+      padding: 12px 16px;
+      border-radius: 6px;
+      border: 1px solid var(--border);
+      margin-bottom: 24px;
+    }
+    input, textarea, select, button {
+      font-family: inherit;
+      font-size: 0.9rem;
+      padding: 8px 12px;
+      border-radius: 4px;
+      border: 1px solid var(--border);
+      background: #0b1120;
+      color: var(--text);
+    }
+    button {
+      background: var(--accent);
+      color: #0b1120;
+      font-weight: 600;
+      cursor: pointer;
+      border: none;
+      transition: background 0.15s ease;
+    }
+    button:hover { background: var(--accent-hover); }
+    button.btn-danger { background: var(--danger); color: white; }
+    button.btn-success { background: var(--success); color: #0b1120; }
+    button.btn-warning { background: var(--warning); color: #0b1120; }
+
+    .grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 24px;
+    }
+    @media (max-width: 900px) { .grid { grid-template-columns: 1fr; } }
+    
+    .panel {
+      background: var(--card-bg);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 18px;
+      margin-bottom: 20px;
+    }
+    .panel h2 { font-size: 1.1rem; margin-bottom: 12px; color: var(--accent); border-bottom: 1px solid var(--border); padding-bottom: 6px; }
+    .form-group { margin-bottom: 12px; display: flex; flex-direction: column; gap: 4px; }
+    label { font-size: 0.8rem; color: var(--muted); }
+
+    .status-box {
+      padding: 10px 14px;
+      border-radius: 6px;
+      margin-bottom: 16px;
+      font-size: 0.85rem;
+      display: none;
+    }
+    .status-success { background: #064e3b; border: 1px solid var(--success); color: #dcfce7; display: block; }
+    .status-error { background: #7f1d1d; border: 1px solid var(--danger); color: #fee2e2; display: block; }
+
+    pre {
+      background: #020617;
+      border: 1px solid var(--border);
+      padding: 12px;
+      border-radius: 6px;
+      overflow-x: auto;
+      max-height: 420px;
+      font-size: 0.8rem;
+      color: #38bdf8;
+    }
+    .item-card {
+      background: #0b1120;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 12px;
+      margin-bottom: 10px;
+    }
+    .item-card h4 { color: #f1f5f9; margin-bottom: 4px; }
+    .item-card p { font-size: 0.85rem; color: var(--muted); margin-bottom: 6px; }
+  </style>
+</head>
+<body>
+
+  <header>
+    <div>
+      <h1>Mediator — Backend Test Console</h1>
+      <p style="color: var(--muted); font-size: 0.85rem;">Minimal harness for API inspection before Figma Make wireframe integration</p>
+    </div>
+    <div id="connectionStatus" class="badge badge-offline">Connecting...</div>
+  </header>
+
+  <div id="statusAlert" class="status-box"></div>
+
+  <!-- Config Bar -->
+  <div class="config-bar">
+    <label for="apiBaseUrl" style="margin: 0; font-weight: bold;">API Base URL:</label>
+    <input type="text" id="apiBaseUrl" value="http://localhost:8000" style="flex: 1;">
+    <button onclick="checkHealth()">Ping /health</button>
+  </div>
+
+  <div class="grid">
+    <!-- Left Column: Actions & Forms -->
+    <div>
+      <!-- Current Project -->
+      <div class="panel">
+        <h2>1. Active Project</h2>
+        <div class="form-group">
+          <label>Selected Project ID:</label>
+          <input type="text" id="currentProjectId" placeholder="Create or select a project below" readonly>
+        </div>
+        <div style="display: flex; gap: 8px;">
+          <button onclick="refreshProject()">Fetch Project</button>
+          <button onclick="listAllProjects()">List All Projects</button>
+        </div>
+      </div>
+
+      <!-- Create Project -->
+      <div class="panel">
+        <h2>2. Create Project</h2>
+        <div class="form-group">
+          <label>Project Title:</label>
+          <input type="text" id="projTitle" value="Hackathon Release Sprint">
+        </div>
+        <div class="form-group">
+          <label>Description:</label>
+          <textarea id="projDesc" rows="2">Team alignment sprint</textarea>
+        </div>
+        <button onclick="createProject()">Create Project</button>
+      </div>
+
+      <!-- Add Member -->
+      <div class="panel">
+        <h2>3. Add Team Member</h2>
+        <div class="form-group">
+          <label>Member Name:</label>
+          <input type="text" id="memberName" value="Alex">
+        </div>
+        <div class="form-group">
+          <label>Role:</label>
+          <input type="text" id="memberRole" value="Frontend Lead">
+        </div>
+        <button onclick="addMember()">Add Member</button>
+      </div>
+
+      <!-- Submit Perspective -->
+      <div class="panel">
+        <h2>4. Submit Member Perspective</h2>
+        <div class="form-group">
+          <label>Member Name:</label>
+          <input type="text" id="respMemberName" value="Alex">
+        </div>
+        <div class="form-group">
+          <label>Perspective Statement:</label>
+          <textarea id="respText" rows="3">Our priority is completing the frontend by Friday.</textarea>
+        </div>
+        <div style="display: flex; gap: 8px;">
+          <button onclick="submitPerspective()">Submit Perspective</button>
+          <button onclick="loadSampleTrio()" class="btn-warning">Load Sample Trio (Alex/Sam/Taylor)</button>
+        </div>
+      </div>
+
+      <!-- Run Analysis -->
+      <div class="panel">
+        <h2>5. Multi-Agent Analysis</h2>
+        <p style="font-size: 0.85rem; color: var(--muted); margin-bottom: 12px;">
+          Triggers Google ADK: Perspective Agent &rarr; Conflict Agent &rarr; Resolution Agent
+        </p>
+        <div style="display: flex; gap: 8px;">
+          <button onclick="triggerAnalysis()" class="btn-success">Run Multi-Agent Analysis</button>
+          <button onclick="getAlignmentReport()">View Latest Report</button>
+        </div>
+      </div>
+
+      <!-- Human Decision -->
+      <div class="panel">
+        <h2>6. Human Decision Sign-off</h2>
+        <div class="form-group">
+          <label>Resolution ID (from proposals):</label>
+          <input type="text" id="decisionResId" value="RES-01">
+        </div>
+        <div class="form-group">
+          <label>Action:</label>
+          <select id="decisionAction">
+            <option value="APPROVE">APPROVE (Accept proposal)</option>
+            <option value="REJECT">REJECT (Decline proposal)</option>
+            <option value="MODIFY">MODIFY (Custom commitment)</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label>Custom Commitment Text (Optional if APPROVE, Required if MODIFY):</label>
+          <textarea id="decisionCustomText" rows="2" placeholder="Agreed binding schedule..."></textarea>
+        </div>
+        <div class="form-group">
+          <label>Decided By (Your Name/Role):</label>
+          <input type="text" id="decidedBy" value="Sam (Product Lead)">
+        </div>
+        <div style="display: flex; gap: 8px;">
+          <button onclick="recordDecision()" class="btn-success">Record Decision</button>
+          <button onclick="getDecisions()">List Confirmed Decisions</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Right Column: Results & Raw JSON Viewer -->
+    <div>
+      <div class="panel">
+        <h2>Structured View: Conflicts & Proposals</h2>
+        <div id="formattedOutput">
+          <p style="color: var(--muted); font-size: 0.85rem;">No analysis triggered yet. Create a project and run analysis to view cards here.</p>
+        </div>
+      </div>
+
+      <div class="panel">
+        <h2>Raw JSON Response Viewer</h2>
+        <pre id="jsonViewer">// API response JSON will appear here...</pre>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    function getBaseUrl() {
+      return document.getElementById("apiBaseUrl").value.replace(/\/+$/, "");
+    }
+
+    function setStatus(msg, isError = false) {
+      const alert = document.getElementById("statusAlert");
+      alert.className = isError ? "status-box status-error" : "status-box status-success";
+      alert.textContent = (isError ? "Error: " : "Success: ") + msg;
+      alert.style.display = "block";
+      setTimeout(() => { alert.style.display = "none"; }, 8000);
+    }
+
+    function displayJson(data) {
+      document.getElementById("jsonViewer").textContent = JSON.stringify(data, null, 2);
+    }
+
+    async function checkHealth() {
+      const conn = document.getElementById("connectionStatus");
+      try {
+        const res = await fetch(`${getBaseUrl()}/health`);
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await res.json();
+        conn.className = "badge badge-online";
+        conn.textContent = `Online (${data.model} | Key: ${data.api_key_configured})`;
+        setStatus("Connected to backend /health successfully!");
+        displayJson(data);
+      } catch (err) {
+        conn.className = "badge badge-offline";
+        conn.textContent = "Offline";
+        setStatus(`Cannot reach ${getBaseUrl()}: ${err.message}`, true);
+      }
+    }
+
+    async function createProject() {
+      const title = document.getElementById("projTitle").value;
+      const description = document.getElementById("projDesc").value;
+      try {
+        const res = await fetch(`${getBaseUrl()}/api/projects`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ title, description })
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || JSON.stringify(data));
+        document.getElementById("currentProjectId").value = data.id;
+        setStatus(`Created Project: ${data.title} (${data.id})`);
+        displayJson(data);
+      } catch (err) {
+        setStatus(err.message, true);
+        displayJson({ error: err.message });
+      }
+    }
+
+    async function addMember() {
+      const projectId = document.getElementById("currentProjectId").value;
+      if (!projectId) return setStatus("Create or select a project first", true);
+      const name = document.getElementById("memberName").value;
+      const role = document.getElementById("memberRole").value;
+
+      try {
+        const res = await fetch(`${getBaseUrl()}/api/projects/${projectId}/members`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ name, role })
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || JSON.stringify(data));
+        setStatus(`Added Member: ${data.name}`);
+        displayJson(data);
+      } catch (err) {
+        setStatus(err.message, true);
+        displayJson({ error: err.message });
+      }
+    }
+
+    async function submitPerspective() {
+      const projectId = document.getElementById("currentProjectId").value;
+      if (!projectId) return setStatus("Create or select a project first", true);
+      const member_name = document.getElementById("respMemberName").value;
+      const raw_text = document.getElementById("respText").value;
+
+      try {
+        const res = await fetch(`${getBaseUrl()}/api/projects/${projectId}/responses`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ member_name, raw_text })
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || JSON.stringify(data));
+        setStatus(`Submitted perspective from ${data.member_name}`);
+        displayJson(data);
+      } catch (err) {
+        setStatus(err.message, true);
+        displayJson({ error: err.message });
+      }
+    }
+
+    async function loadSampleTrio() {
+      const projectId = document.getElementById("currentProjectId").value;
+      if (!projectId) return setStatus("Create or select a project first", true);
+
+      const trio = [
+        { member_name: "Alex", raw_text: "Our priority is completing the frontend by Friday." },
+        { member_name: "Sam", raw_text: "I thought we agreed to launch the entire application on Thursday." },
+        { member_name: "Taylor", raw_text: "I think we should complete testing before launching anything." }
+      ];
+
+      for (const item of trio) {
+        await fetch(`${getBaseUrl()}/api/projects/${projectId}/responses`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(item)
+        });
+      }
+      setStatus("Loaded sample statements for Alex, Sam, and Taylor!");
+      const res = await fetch(`${getBaseUrl()}/api/projects/${projectId}/responses`);
+      const all = await res.json();
+      displayJson(all);
+    }
+
+    async function triggerAnalysis() {
+      const projectId = document.getElementById("currentProjectId").value;
+      if (!projectId) return setStatus("Create or select a project first", true);
+      setStatus("Triggering multi-agent analysis (Perspective -> Conflict -> Resolution)...");
+
+      try {
+        const res = await fetch(`${getBaseUrl()}/api/projects/${projectId}/analyze`, {
+          method: "POST"
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || JSON.stringify(data));
+        setStatus(`Analysis completed in ${data.execution_metadata.duration_seconds}s! Mode: ${data.execution_mode}`);
+        displayJson(data);
+        renderStructuredReport(data.synthesis_output, data.conflicts_output);
+      } catch (err) {
+        setStatus(err.message, true);
+        displayJson({ error: err.message });
+      }
+    }
+
+    async function getAlignmentReport() {
+      const projectId = document.getElementById("currentProjectId").value;
+      if (!projectId) return setStatus("Create or select a project first", true);
+
+      try {
+        const res = await fetch(`${getBaseUrl()}/api/projects/${projectId}/alignment`);
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || JSON.stringify(data));
+        setStatus(`Retrieved alignment report for ${projectId}`);
+        displayJson(data);
+        renderStructuredReport(data, null);
+      } catch (err) {
+        setStatus(err.message, true);
+        displayJson({ error: err.message });
+      }
+    }
+
+    function renderStructuredReport(synth, conflictsOut) {
+      const container = document.getElementById("formattedOutput");
+      container.innerHTML = "";
+
+      const scoreCard = document.createElement("div");
+      scoreCard.className = "item-card";
+      scoreCard.innerHTML = `
+        <h4>Alignment Score: ${synth.alignment_score} / 100.0</h4>
+        <p>${synth.executive_summary}</p>
+        <p style="color: var(--warning); font-size: 0.75rem;"><strong>Governance:</strong> ${synth.disclaimer}</p>
+      `;
+      container.appendChild(scoreCard);
+
+      if (conflictsOut && conflictsOut.conflicts) {
+        conflictsOut.conflicts.forEach(c => {
+          const cCard = document.createElement("div");
+          cCard.className = "item-card";
+          cCard.innerHTML = `
+            <h4 style="color: var(--danger)">[${c.conflict_id}] ${c.title}</h4>
+            <p><strong>Severity:</strong> ${c.severity} | <strong>Parties:</strong> ${c.parties_involved.join(", ")}</p>
+            <p>${c.severity_reasoning}</p>
+          `;
+          container.appendChild(cCard);
+        });
+      }
+
+      if (synth.proposed_resolutions) {
+        synth.proposed_resolutions.forEach(r => {
+          const rCard = document.createElement("div");
+          rCard.className = "item-card";
+          rCard.innerHTML = `
+            <h4 style="color: var(--success)">[${r.resolution_id}] ${r.conflict_title}</h4>
+            <p><strong>Recommended Solution:</strong> ${r.recommended_solution}</p>
+            <p><strong>Status:</strong> <span class="badge" style="background:#854d0e; color:#fef08a">${r.status}</span> (Human approval needed)</p>
+            <p><strong>Impacted:</strong> ${r.impacted_members.join(", ")}</p>
+            <button onclick="document.getElementById('decisionResId').value='${r.resolution_id}'" style="padding:4px 8px; font-size:0.75rem;">Select for Decision</button>
+          `;
+          container.appendChild(rCard);
+        });
+      }
+    }
+
+    async function recordDecision() {
+      const projectId = document.getElementById("currentProjectId").value;
+      if (!projectId) return setStatus("Create or select a project first", true);
+      const resolution_id = document.getElementById("decisionResId").value;
+      const action = document.getElementById("decisionAction").value;
+      const decision_text = document.getElementById("decisionCustomText").value || null;
+      const decided_by = document.getElementById("decidedBy").value;
+
+      try {
+        const res = await fetch(`${getBaseUrl()}/api/projects/${projectId}/decisions`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ resolution_id, action, decision_text, decided_by })
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || JSON.stringify(data));
+        setStatus(`Recorded decision for ${data.resolution_id}! Status: ${data.status}`);
+        displayJson(data);
+      } catch (err) {
+        setStatus(err.message, true);
+        displayJson({ error: err.message });
+      }
+    }
+
+    async function getDecisions() {
+      const projectId = document.getElementById("currentProjectId").value;
+      if (!projectId) return setStatus("Create or select a project first", true);
+
+      try {
+        const res = await fetch(`${getBaseUrl()}/api/projects/${projectId}/decisions`);
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || JSON.stringify(data));
+        setStatus(`Fetched ${data.length} confirmed decision(s)`);
+        displayJson(data);
+      } catch (err) {
+        setStatus(err.message, true);
+        displayJson({ error: err.message });
+      }
+    }
+
+    async function listAllProjects() {
+      try {
+        const res = await fetch(`${getBaseUrl()}/api/projects`);
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || JSON.stringify(data));
+        setStatus(`Retrieved ${data.length} project(s)`);
+        displayJson(data);
+        if (data.length > 0 && !document.getElementById("currentProjectId").value) {
+          document.getElementById("currentProjectId").value = data[0].id;
+        }
+      } catch (err) {
+        setStatus(err.message, true);
+        displayJson({ error: err.message });
+      }
+    }
+
+    async function refreshProject() {
+      const projectId = document.getElementById("currentProjectId").value;
+      if (!projectId) return setStatus("Enter or select a Project ID first", true);
+      try {
+        const res = await fetch(`${getBaseUrl()}/api/projects/${projectId}`);
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || JSON.stringify(data));
+        setStatus(`Loaded Project: ${data.title}`);
+        displayJson(data);
+      } catch (err) {
+        setStatus(err.message, true);
+        displayJson({ error: err.message });
+      }
+    }
+
+    // Auto-ping on load
+    window.addEventListener("DOMContentLoaded", () => {
+      document.getElementById("apiBaseUrl").value = window.location.origin.includes("localhost") || window.location.origin.includes("127.0.0.1") 
+        ? window.location.origin 
+        : "http://localhost:8000";
+      checkHealth();
+    });
+  </script>
+</body>
+</html>
