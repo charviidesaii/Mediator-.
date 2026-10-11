@@ -41,3 +41,37 @@ async def test_dummy_frontend_endpoint(async_client):
     assert "text/html" in res.headers.get("content-type", "")
     assert "Mediator — Backend Test Console" in res.text
     assert "Create Project" in res.text
+
+
+@pytest.mark.asyncio
+async def test_api_key_authentication_enforcement(async_client):
+    """Verify that when AUTH_ENABLED is True, protected API endpoints require valid API key."""
+    from unittest.mock import patch
+    from app.config import settings
+
+    with patch.object(settings, "auth_enabled", True), \
+         patch.object(settings, "api_secret_key", "secret-test-key-456"):
+
+        # 1. Unauthenticated request to /api/projects is rejected with 401
+        res_no_auth = await async_client.get("/api/projects")
+        assert res_no_auth.status_code == 401
+        assert "Unauthorized" in res_no_auth.json().get("detail", "")
+
+        # 2. Request with invalid key is rejected with 401
+        res_bad_key = await async_client.get("/api/projects", headers={"X-API-Key": "wrong-key"})
+        assert res_bad_key.status_code == 401
+
+        # 3. Request with valid X-API-Key header succeeds
+        res_good_header = await async_client.get("/api/projects", headers={"X-API-Key": "secret-test-key-456"})
+        assert res_good_header.status_code == 200
+
+        # 4. Request with valid Bearer token succeeds
+        res_good_bearer = await async_client.get(
+            "/api/projects", headers={"Authorization": "Bearer secret-test-key-456"}
+        )
+        assert res_good_bearer.status_code == 200
+
+        # 5. Non-API endpoints (/health, /test-ui) remain publicly accessible
+        health_res = await async_client.get("/health")
+        assert health_res.status_code == 200
+

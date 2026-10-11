@@ -43,11 +43,21 @@ async def test_n8n_webhook_dispatches_on_approve():
         assert mock_post.called
 
         called_payload = mock_post.call_args[1]["json"]
+        called_headers = mock_post.call_args[1]["headers"]
+        # Stable decision-based ID
+        assert called_payload["event_id"] == "evt_dec_dec_1"
         assert called_payload["event_type"] == "decision.approved"
         assert called_payload["project_id"] == "proj_42"
         assert called_payload["resolution_id"] == "res_7"
         assert called_payload["decided_by"] == "david@mediator.app"
         assert called_payload["decision_text"] == "Ship v2 API on Friday"
+        assert "channel_id" in called_payload
+
+        # Authentication headers
+        assert "X-Mediator-Secret" in called_headers
+        assert "Authorization" in called_headers
+        assert called_headers["Authorization"].startswith("Bearer ")
+
 
 
 @pytest.mark.asyncio
@@ -135,3 +145,43 @@ async def test_n8n_webhook_failure_does_not_raise():
         res = await trigger_n8n_decision_webhook("proj_42", action, confirmed)
         # Must return None and not raise an exception
         assert res is None
+
+
+@pytest.mark.asyncio
+async def test_n8n_webhook_retries_transient_failures():
+    """Validates that retry-safe delivery recovers when initial attempts fail transiently."""
+    action = DecisionActionRequest(
+        resolution_id="res_retry",
+        action="APPROVE",
+        decided_by="david@mediator.app",
+    )
+    confirmed = ConfirmedDecision(
+        id="dec_retry_1",
+        project_id="proj_retry",
+        resolution_id="res_retry",
+        action="APPROVE",
+        status=DecisionStatus.APPROVED,
+        decision_text="Retry test commitment",
+        decided_by="david@mediator.app",
+        decided_at=datetime.now(timezone.utc),
+    )
+
+    from unittest.mock import MagicMock
+    mock_success = MagicMock()
+    mock_success.status_code = 200
+    mock_success.headers = {"content-type": "application/json"}
+    mock_success.json.return_value = {"status": "processed", "event_id": "evt_dec_dec_retry_1"}
+    mock_success.raise_for_status.return_value = None
+
+    # First attempt fails with transient network error, second attempt succeeds
+    side_effects = [Exception("Transient network timeout"), mock_success]
+
+    with patch("httpx.AsyncClient.post", side_effect=side_effects) as mock_post:
+        res = await trigger_n8n_decision_webhook("proj_retry", action, confirmed)
+        assert res is not None
+        assert res.get("status") == "processed"
+        assert mock_post.call_count == 2
+        # Verify event_id is identical on both attempts (stable decision ID)
+        assert mock_post.call_args_list[0][1]["json"]["event_id"] == "evt_dec_dec_retry_1"
+        assert mock_post.call_args_list[1][1]["json"]["event_id"] == "evt_dec_dec_retry_1"
+

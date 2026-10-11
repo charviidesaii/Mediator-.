@@ -37,20 +37,60 @@ type RequestOptions = Omit<RequestInit, "body"> & {
   body?: unknown;
 };
 
+/**
+ * Strips secrets, tokens, and masks personal emails to ensure Beeceptor public mock
+ * receives strictly sanitized or synthetic test data.
+ */
+export function sanitizeMockPayload(data: unknown): unknown {
+  if (typeof data === "string") {
+    return data
+      .replace(/([a-zA-Z0-9_\-\.]+)@([a-zA-Z0-9_\-\.]+)/g, "synthetic_user@example.test")
+      .replace(/(?:xox[baprs]|sk-|ghp_|Bearer\s+)[a-zA-Z0-9_\-]+/gi, "[redacted_token]");
+  }
+  if (Array.isArray(data)) {
+    return data.map(sanitizeMockPayload);
+  }
+  if (typeof data === "object" && data !== null) {
+    const sanitized: Record<string, unknown> = {};
+    for (const [key, val] of Object.entries(data)) {
+      const lowerKey = key.toLowerCase();
+      if (lowerKey.includes("token") || lowerKey.includes("secret") || lowerKey.includes("password") || lowerKey.includes("key")) {
+        sanitized[key] = "[redacted_mock_secret]";
+      } else {
+        sanitized[key] = sanitizeMockPayload(val);
+      }
+    }
+    return sanitized;
+  }
+  return data;
+}
+
 async function request<T>(path: string, options: RequestOptions = {}): Promise<T> {
   const normalizedPath = path.startsWith("/") ? path : `/${path}`;
   const url = `${API_BASE_URL}${normalizedPath}`;
+
+  // Sanitize data and remove credentials if sending to Beeceptor mock mode
+  const outgoingBody = isMockMode && options.body !== undefined
+    ? sanitizeMockPayload(options.body)
+    : options.body;
+
+  const requestHeaders: Record<string, string> = {
+    Accept: "application/json",
+    ...(outgoingBody === undefined ? {} : { "Content-Type": "application/json" }),
+    ...((options.headers as Record<string, string>) || {}),
+  };
+
+  if (isMockMode) {
+    delete requestHeaders["Authorization"];
+    delete requestHeaders["X-API-Key"];
+  }
 
   let response: Response;
   try {
     response = await fetch(url, {
       ...options,
-      headers: {
-        Accept: "application/json",
-        ...(options.body === undefined ? {} : { "Content-Type": "application/json" }),
-        ...options.headers,
-      },
-      body: options.body === undefined ? undefined : JSON.stringify(options.body),
+      headers: requestHeaders,
+      body: outgoingBody === undefined ? undefined : JSON.stringify(outgoingBody),
     });
   } catch (err) {
     throw new ApiError(

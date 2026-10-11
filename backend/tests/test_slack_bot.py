@@ -5,6 +5,7 @@ import tempfile
 from unittest.mock import MagicMock
 import pytest
 
+from app.config import settings
 from app.models.schemas import ProjectCreate
 from app.services.supabase import StorageService
 from app.slack.bot import _is_duplicate_event, create_slack_app
@@ -222,4 +223,59 @@ async def test_slack_handle_app_mention_executes_analysis_service():
 
             # Assert ack or result message was posted
             assert mock_client.chat_postMessage.called
+
+
+@pytest.mark.asyncio
+async def test_slack_bot_and_fastapi_share_same_database():
+    """Verifies that the standalone Slack bot and FastAPI backend access the exact same
+    persistent database file and maintain state consistency across interactions.
+    """
+    import tempfile
+    from app.services.supabase import storage_service, StorageService
+    from app.slack.service import slack_service
+
+    with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as tmp:
+        shared_db_path = tmp.name
+
+    try:
+        # Configure shared persistent database
+        fastapi_storage = StorageService(backend="sqlite")
+        fastapi_storage.db_path = shared_db_path
+        await fastapi_storage.initialize()
+
+        slack_bot_storage = StorageService(backend="sqlite")
+        slack_bot_storage.db_path = shared_db_path
+        await slack_bot_storage.initialize()
+
+        # 1. Slack bot creates a project from a Slack channel mention
+        slack_project = await slack_bot_storage.get_or_create_project_for_channel(
+            channel_id="C_SHARED_DB_TEST",
+            channel_name="shared-db-sprint",
+        )
+        assert slack_project.id is not None
+
+        # Ingest a message via Slack bot service
+        await slack_bot_storage.add_response(
+            project_id=slack_project.id,
+            member_name="SlackUser",
+            raw_text="The ship date must be Tuesday.",
+            source="slack",
+        )
+
+        # 2. FastAPI backend reads the exact same project and response
+        fastapi_project = await fastapi_storage.get_project(slack_project.id)
+        assert fastapi_project is not None
+        assert fastapi_project.title == slack_project.title
+
+        fastapi_responses = await fastapi_storage.get_responses(slack_project.id)
+        assert len(fastapi_responses) == 1
+        assert fastapi_responses[0].member_name == "SlackUser"
+        assert "Tuesday" in fastapi_responses[0].raw_text
+
+        # 3. Path resolution check
+        assert os.path.isabs(settings.resolved_sqlite_db_path)
+    finally:
+        if os.path.exists(shared_db_path):
+            os.remove(shared_db_path)
+
 

@@ -46,7 +46,7 @@ async def lifespan(app: FastAPI):
     """Application startup and shutdown events."""
     logger.info(f"Starting {settings.project_name} v{settings.version}")
     logger.info(f"Using Gemini Model: {settings.gemini_model}")
-    logger.info(f"Storage Backend: {settings.storage_backend}")
+    logger.info(f"Storage Backend: {settings.storage_backend} ({storage_service.db_path})")
 
     # Initialize persistent storage tables
     await storage_service.initialize()
@@ -72,14 +72,38 @@ app = FastAPI(
     openapi_url="/openapi.json",
 )
 
-# Configure CORS for decoupled frontend (Figma Make, React/Vite, Next.js) and Slack/n8n
+# Configure CORS with credential compliance (avoid credentials with wildcard *)
+allow_all_origins = "*" in settings.cors_origins
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=settings.cors_origins,
-    allow_credentials=True,
+    allow_origins=["*"] if allow_all_origins else settings.cors_origins,
+    allow_credentials=not allow_all_origins,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+# Optional API Key Authentication Middleware
+@app.middleware("http")
+async def authentication_middleware(request: Request, call_next):
+    """Enforces API key authentication when AUTH_ENABLED is enabled."""
+    if settings.auth_enabled and request.url.path.startswith(settings.api_prefix):
+        # Permit CORS preflight
+        if request.method == "OPTIONS":
+            return await call_next(request)
+
+        api_key = request.headers.get("x-api-key")
+        auth_header = request.headers.get("authorization", "")
+        if not api_key and auth_header.startswith("Bearer "):
+            api_key = auth_header[7:].strip()
+
+        if api_key != settings.api_secret_key:
+            return JSONResponse(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                content={"detail": "Unauthorized: Invalid or missing API key."},
+            )
+
+    return await call_next(request)
 
 
 # Global unhandled exception handler

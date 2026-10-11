@@ -1,0 +1,37 @@
+services:
+  mediator-app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: mediator-app
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      - APP_ENV=production
+      - DEBUG=false
+      - GEMINI_API_KEY=${GEMINI_API_KEY:-}
+      - GEMINI_MODEL=${GEMINI_MODEL:-gemini-2.5-flash}
+      - API_SECRET_KEY=${API_SECRET_KEY:-dev-mediator-key-123}
+      - AUTH_ENABLED=${AUTH_ENABLED:-false}
+      - CORS_ORIGINS=["http://localhost:3000","http://localhost:5173","http://localhost:8000"]
+      - STORAGE_BACKEND=sqlite
+      - SQLITE_DB_PATH=/app/data/mediator.db
+      - SLACK_BOT_TOKEN=${SLACK_BOT_TOKEN:-}
+      - SLACK_APP_TOKEN=${SLACK_APP_TOKEN:-}
+      - SLACK_SIGNING_SECRET=${SLACK_SIGNING_SECRET:-}
+      - SLACK_DEFAULT_CHANNEL=${SLACK_DEFAULT_CHANNEL:-#general}
+      - N8N_WEBHOOK_URL=${N8N_WEBHOOK_URL:-https://dtakang.app.n8n.cloud/webhook/mediator-decision}
+      - N8N_WEBHOOK_SECRET=${N8N_WEBHOOK_SECRET:-dev-mediator-key-123}
+    volumes:
+      - mediator_data:/app/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+volumes:
+  mediator_data:
+    driver: local

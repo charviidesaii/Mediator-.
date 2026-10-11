@@ -1,3 +1,4 @@
+import os
 from typing import List, Literal, Optional
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -49,6 +50,7 @@ class Settings(BaseSettings):
     slack_bot_token: Optional[str] = Field(default=None, alias="SLACK_BOT_TOKEN")
     slack_app_token: Optional[str] = Field(default=None, alias="SLACK_APP_TOKEN")
     slack_signing_secret: Optional[str] = Field(default=None, alias="SLACK_SIGNING_SECRET")
+    slack_default_channel: str = Field(default="#general", alias="SLACK_DEFAULT_CHANNEL")
     dashboard_base_url: str = Field(default="http://localhost:8000", alias="DASHBOARD_BASE_URL")
 
     # n8n Automation Webhook Configuration (Triggered on human-approved commitments)
@@ -56,12 +58,29 @@ class Settings(BaseSettings):
         default="https://dtakang.app.n8n.cloud/webhook/mediator-decision",
         alias="N8N_WEBHOOK_URL",
     )
+    n8n_webhook_secret: Optional[str] = Field(default=None, alias="N8N_WEBHOOK_SECRET")
 
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",
         extra="ignore",
     )
+
+    @property
+    def resolved_sqlite_db_path(self) -> str:
+        """Returns absolute path to the SQLite database file, anchored to project repository root."""
+        if os.path.isabs(self.sqlite_db_path):
+            return self.sqlite_db_path
+        # Anchor relative to repository root (parent of backend)
+        app_dir = os.path.dirname(os.path.abspath(__file__))
+        backend_dir = os.path.dirname(app_dir)
+        repo_root = os.path.dirname(backend_dir)
+        return os.path.abspath(os.path.join(repo_root, self.sqlite_db_path))
+
+    @property
+    def effective_webhook_secret(self) -> str:
+        """Shared secret token for authenticating n8n webhook dispatches."""
+        return self.n8n_webhook_secret or self.api_secret_key
 
     @property
     def active_api_key(self) -> Optional[str]:
@@ -80,3 +99,4 @@ class Settings(BaseSettings):
 
 
 settings = Settings()
+

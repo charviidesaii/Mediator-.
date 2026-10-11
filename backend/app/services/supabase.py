@@ -101,7 +101,7 @@ class StorageService:
 
     def __init__(self, backend: Optional[str] = None):
         self.backend = backend or settings.storage_backend
-        self.db_path = settings.sqlite_db_path
+        self.db_path = settings.resolved_sqlite_db_path
 
         # Memory store structures (used when backend == 'memory')
         self._projects: Dict[str, Project] = {}
@@ -513,6 +513,32 @@ class StorageService:
             return None
 
         return self._channel_mappings.get(channel_id)
+
+    async def get_channel_mapping_for_project(self, project_id: str) -> Optional[dict]:
+        """Looks up the Slack channel mapping for a given project ID."""
+        await self.initialize()
+        if self.backend == "sqlite":
+            async with aiosqlite.connect(self.db_path) as db:
+                db.row_factory = aiosqlite.Row
+                async with db.execute(
+                    "SELECT channel_id, project_id, channel_name, created_at "
+                    "FROM slack_channel_mappings WHERE project_id = ? ORDER BY created_at DESC LIMIT 1",
+                    (project_id,),
+                ) as cursor:
+                    row = await cursor.fetchone()
+                    if row:
+                        return {
+                            "channel_id": row["channel_id"],
+                            "project_id": row["project_id"],
+                            "channel_name": row["channel_name"],
+                            "created_at": row["created_at"],
+                        }
+            return None
+
+        for rec in self._channel_mappings.values():
+            if rec.get("project_id") == project_id:
+                return rec
+        return None
 
     async def get_or_create_project_for_channel(
         self, channel_id: str, channel_name: Optional[str] = None
