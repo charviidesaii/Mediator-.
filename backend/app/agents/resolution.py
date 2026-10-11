@@ -12,6 +12,7 @@ Explicitly identifies unresolved questions requiring human judgment.
 
 import json
 import logging
+import re
 from typing import Any, Dict, List, Optional
 from google.adk.agents import Agent
 from google.adk.runners import Runner
@@ -21,6 +22,7 @@ from google.genai import Client, types
 from app.config import settings
 from app.models.schemas import (
     ConflictDetectionOutput,
+    ConflictSeverity,
     PerspectiveAnalysisOutput,
     ProposedResolution,
     ResolutionOption,
@@ -41,14 +43,16 @@ CRITICAL GOVERNANCE PRINCIPLES:
 2. EQUITABLE PERSPECTIVE SYNTHESIS:
    - Carefully consider every teammate's perspective and constraints.
    - Do not dismiss any member's valid concern (e.g. testing requirements or hard deadlines).
-3. PRAGMATIC COMPROMISES & OPTIONS:
-   - For every detected conflict, formulate a primary `recommended_solution` with clear reasoning.
+3. PRAGMATIC COMPROMISES & CONFIRMING OWNERSHIP:
+   - For every detected conflict, formulate a primary `recommended_solution` in 1 to 2 concise sentences with clear reasoning.
+   - If ownership of a task or milestone is unclear, suggest CONFIRMING an owner rather than inventing or arbitrarily assigning one.
+   - Never invent or confirm assignments and deadlines on behalf of the team.
    - Provide concrete alternative options (`alternative_options`) showing pros, cons, and trade-offs.
-   - For deadline clashes, propose realistic sequenced schedules (e.g. accommodating development finish, QA window, and launch).
+   - For deadline clashes, propose realistic sequenced schedules accommodating prerequisite development, testing window, and presentation.
 4. UNRESOLVED QUESTIONS:
    - Explicitly list specific questions that require human consensus and cannot be decided by AI.
 5. ESTIMATE ALIGNMENT SCORE:
-   - Provide an alignment score from 0.0 to 100.0 based on the proportion and severity of resolved vs blocking conflicts.
+   - Provide an alignment score from 0.0 to 100.0 based on the proportion and severity of distinct resolved vs blocking conflicts.
 
 You must respond ONLY with structured JSON matching the SynthesisReport schema.
 """.strip()
@@ -132,6 +136,12 @@ class ResolutionSynthesisService:
                     report.project_id = project_id
                     for res in report.proposed_resolutions:
                         res.status = "PROPOSED"
+                    if conflicts.conflicts:
+                        high_c = len([c for c in conflicts.conflicts if c.severity == ConflictSeverity.HIGH])
+                        med_c = len([c for c in conflicts.conflicts if c.severity == ConflictSeverity.MEDIUM])
+                        expected_score = max(25.0, min(100.0, 100.0 - (high_c * 15.0) - (med_c * 10.0)))
+                        if report.alignment_score < expected_score - 15:
+                            report.alignment_score = expected_score
                     self.last_execution_mode = "LIVE_GEMINI"
                     return report
 
@@ -154,6 +164,12 @@ class ResolutionSynthesisService:
                 # Enforce safety invariant: status must always be PROPOSED
                 for res in report.proposed_resolutions:
                     res.status = "PROPOSED"
+                if conflicts.conflicts:
+                    high_c = len([c for c in conflicts.conflicts if c.severity == ConflictSeverity.HIGH])
+                    med_c = len([c for c in conflicts.conflicts if c.severity == ConflictSeverity.MEDIUM])
+                    expected_score = max(25.0, min(100.0, 100.0 - (high_c * 15.0) - (med_c * 10.0)))
+                    if report.alignment_score < expected_score - 15:
+                        report.alignment_score = expected_score
                 self.last_execution_mode = "LIVE_GEMINI"
                 return report
             else:
@@ -270,34 +286,40 @@ class ResolutionSynthesisService:
             elif conflict.conflict_type.value == "RESPONSIBILITY_OVERLAP_OR_GAP":
                 first_party = conflict.parties_involved[0] if conflict.parties_involved else "Lead"
                 second_party = conflict.parties_involved[1] if len(conflict.parties_involved) > 1 else "Reviewer"
+                # Extract clean task label from title
+                task_label = conflict.title
+                if ":" in task_label:
+                    task_label = task_label.split(":", 1)[1].strip()
+                task_label = re.sub(r"\s+Between\s+.*$", "", task_label, flags=re.IGNORECASE).strip()
+                if not task_label:
+                    task_label = "this deliverable"
+
                 proposed_resolutions.append(
                     ProposedResolution(
                         resolution_id=f"RES-{res_counter:02d}",
                         conflict_id=conflict.conflict_id,
                         conflict_title=conflict.title,
                         recommended_solution=(
-                            f"Establish explicit single-owner accountability between {parties}: "
-                            f"Formally designate {first_party} as primary deliverable owner for execution, "
-                            f"with {second_party} serving as secondary reviewer and verification backup."
+                            f"Confirm which team member owns {task_label.lower()} between {parties} during the next sync to establish clear accountability."
                         ),
                         reasoning=(
-                            f"Identified conflicting ownership expectations across {parties}. "
-                            "Having multiple assumptions of ownership creates execution gaps where critical tasks are dropped. "
-                            "A single accountable owner with a secondary peer reviewer balances delivery speed and quality."
+                            f"Identified unconfirmed ownership expectations across {parties}. "
+                            "Having unconfirmed assumptions creates execution gaps where critical tasks are dropped. "
+                            "Confirming an explicit owner with backup support ensures predictable delivery."
                         ),
                         alternative_options=[
                             ResolutionOption(
                                 option_id=f"OPT-{res_counter}A",
-                                title=f"Designate {first_party} as Primary Owner with {second_party} as Reviewer",
-                                description=f"{first_party} leads hands-on implementation and deployment while {second_party} conducts pre-release review.",
+                                title=f"Confirm {first_party} as Primary Owner with {second_party} as Reviewer",
+                                description=f"{first_party} leads hands-on implementation while {second_party} conducts peer review.",
                                 pros=["Clear single-threaded ownership", "Reduces ambiguity"],
                                 cons=[f"Concentrates workload on {first_party}"],
-                                compromise_notes=f"Maintains {second_party}'s visibility through mandatory review checkpoints.",
+                                compromise_notes=f"Maintains {second_party}'s visibility through peer review checkpoints.",
                             ),
                             ResolutionOption(
                                 option_id=f"OPT-{res_counter}B",
-                                title="Split Scope: Automated Pipeline vs Production Release",
-                                description="Divide responsibilities into configuration/CI setup vs production environment deployment execution.",
+                                title=f"Split Scope between {first_party} and {second_party}",
+                                description="Divide responsibilities into configuration/CI setup vs deployment and validation.",
                                 pros=["Shared engagement", "Prevents single-point dependency"],
                                 cons=["Requires explicit handoff interface"],
                                 compromise_notes=f"Allows both {first_party} and {second_party} to contribute distinct technical expertise.",
@@ -305,8 +327,8 @@ class ResolutionSynthesisService:
                         ],
                         impacted_members=conflict.parties_involved,
                         unresolved_questions_for_team=[
-                            f"Between {parties}, who has direct admin access and production credentials?",
-                            "Can the team agree on a RACI matrix (Responsible, Accountable, Consulted, Informed) for release milestones?",
+                            f"Between {parties}, who has direct bandwidth to take primary accountability for {task_label.lower()}?",
+                            "Can the team agree on a simple RACI handoff for release milestones?",
                         ],
                         status="PROPOSED",
                     )
@@ -366,11 +388,11 @@ class ResolutionSynthesisService:
             "Confirm handoff dates between implementation leads and QA.",
             "Record final approved commitments through the /decisions API.",
         ]
-
-        # Calculate alignment index
+        # Calculate alignment index based on distinct grouped conflicts
         high_conflicts = len([c for c in conflicts.conflicts if c.severity.value == "HIGH"])
         med_conflicts = len([c for c in conflicts.conflicts if c.severity.value == "MEDIUM"])
-        alignment_score = max(20.0, min(100.0, 100.0 - (high_conflicts * 25.0) - (med_conflicts * 15.0)))
+        low_conflicts = len([c for c in conflicts.conflicts if c.severity.value == "LOW"])
+        alignment_score = max(25.0, min(100.0, 100.0 - (high_conflicts * 15.0) - (med_conflicts * 10.0) - (low_conflicts * 5.0)))
 
         return SynthesisReport(
             report_id=f"SYNTH-{project_id[:8]}",

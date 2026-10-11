@@ -143,7 +143,10 @@ def create_slack_app() -> Optional[App]:
                     return
 
                 await slack_service.ingest_messages_into_project(
-                    project_id=project.id, messages=extracted_msgs, source="slack"
+                    project_id=project.id,
+                    messages=extracted_msgs,
+                    source="slack",
+                    channel_id=channel_id,
                 )
 
                 result = await analysis_service.trigger_analysis(project.id)

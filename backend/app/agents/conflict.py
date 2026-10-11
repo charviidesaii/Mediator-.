@@ -13,6 +13,7 @@ severity using strictly documented criteria across arbitrary participants.
 
 import json
 import logging
+import re
 from typing import Any, Dict, List, Optional
 from google.adk.agents import Agent
 from google.adk.runners import Runner
@@ -27,6 +28,7 @@ from app.models.schemas import (
     ConflictType,
     DetectedConflict,
     EvidenceItem,
+    ExtractedPerspective,
     PerspectiveAnalysisOutput,
 )
 
@@ -56,9 +58,159 @@ Core Responsibilities:
    - MEDIUM: Significant friction; timeline compression or unclarified dependencies that jeopardize project quality or team morale.
    - LOW: Minor difference in preference, terminology, or non-critical sequencing.
    - You MUST explain the rationale in `severity_reasoning`.
+6. GROUPING & GOVERNANCE:
+   - Group duplicate findings about the same task, milestone, or deliverable into a single issue.
+   - NEVER create self-conflicts where an individual is in conflict with themselves (e.g. "Charvi vs. Charvi"). Every conflict must involve at least 2 distinct team members.
+   - Issue titles must be short, clear, and at most 60 characters.
 
 You must respond ONLY with structured JSON matching the ConflictDetectionOutput schema.
 """.strip()
+
+
+def clean_issue_title(title: str, max_chars: int = 60) -> str:
+    """Produces a concise, descriptive issue title under max_chars without technical jargon."""
+    t = (title or "").strip()
+    t = re.sub(r"\s*\((?:CONF|RES)[^)]*\)", "", t)
+    # Strip trailing " Between X and Y" or " across X, Y"
+    t = re.sub(r"\s+(?:Between|between)\s+[A-Za-z0-9\s.,]+(?:\s+and\s+[A-Za-z0-9\s.,]+)*$", "", t)
+    t = re.sub(r"\s+across\s+[A-Za-z0-9\s.,]+$", "", t, flags=re.IGNORECASE)
+
+    # Clean technical jargon from title
+    t = re.sub(r"\bQuality\s+Assurance\b", "Testing", t, flags=re.IGNORECASE)
+    t = re.sub(r"\bQA\b", "Testing", t)
+
+    if ":" in t:
+        parts = [p.strip() for p in t.split(":", 1)]
+        prefix, suffix = parts[0], parts[1]
+        # If suffix is "Person (Day) vs Person (Day)"
+        if " vs " in suffix.lower() and ("(" in suffix or any(d in suffix.lower() for d in ["saturday", "sunday", "friday", "thursday", "wednesday", "tuesday", "monday"])):
+            t = prefix
+        else:
+            suffix_clean = re.sub(r"\s+(?:Between|between)\s+.*$", "", suffix)
+            candidate = f"{prefix}: {suffix_clean}".strip()
+            if len(candidate) <= max_chars:
+                t = candidate
+            elif len(prefix) <= max_chars:
+                t = prefix
+
+    if len(t) > max_chars:
+        t = t[:max_chars].rsplit(" ", 1)[0].rstrip(" -:,")
+    return t
+
+
+def clean_and_group_conflicts(conflicts: List[DetectedConflict]) -> List[DetectedConflict]:
+    """Filters self-conflicts and groups duplicate findings about the same task into one distinct issue."""
+    if not conflicts:
+        return []
+
+    # 1. Filter out self-conflicts (e.g. Charvi vs Charvi)
+    valid_conflicts: List[DetectedConflict] = []
+    for c in conflicts:
+        unique_parties = set(p.strip().lower() for p in c.parties_involved if p.strip())
+        if len(unique_parties) < 2:
+            continue
+
+        tl = (c.title or "").lower()
+        if " vs " in tl:
+            parts = [s.strip() for s in tl.split(" vs ", 1)]
+            if len(parts) == 2 and parts[0] == parts[1]:
+                continue
+            first_name = parts[0].split("(")[0].strip()
+            second_name = parts[1].split("(")[0].strip()
+            if first_name and first_name == second_name:
+                continue
+
+        if "between " in tl and " and " in tl:
+            after_between = tl.split("between ", 1)[1]
+            between_parts = [s.strip() for s in after_between.split(" and ", 1)]
+            if len(between_parts) == 2 and between_parts[0] == between_parts[1]:
+                continue
+
+        valid_conflicts.append(c)
+
+    # 2. Group duplicate conflicts by normalized issue category and task domain
+    grouped_buckets: Dict[str, List[DetectedConflict]] = {}
+    for c in valid_conflicts:
+        tl = (c.title or "").lower()
+        c_type = c.conflict_type.value if hasattr(c.conflict_type, "value") else str(c.conflict_type)
+
+        if c_type == "DEADLINE_CONTRADICTION" or "deadline" in tl or "completion" in tl or "schedule" in tl:
+            if any(k in tl for k in ["launch", "release", "presentation", "demo", "target deadline", "readiness", "completion"]):
+                group_key = "deadline:project_launch"
+            else:
+                group_key = "deadline:milestone_sequence"
+        elif c_type == "RESPONSIBILITY_OVERLAP_OR_GAP" or "ownership" in tl or "responsibility" in tl:
+            domain = "responsibility:task_ownership"
+            for d in ["frontend", "backend", "integration", "deployment", "quality assurance", "testing", "design", "ui"]:
+                if d in tl:
+                    domain = f"responsibility:{d}"
+                    break
+            group_key = domain
+        elif c_type == "INFORMATION_GAP" or "quality assurance" in tl or "testing" in tl:
+            group_key = "gap:testing_buffer"
+        elif "scope" in tl or "recommendation" in tl:
+            group_key = "scope:feature_scope"
+        else:
+            cat_val = c.category.value if hasattr(c.category, "value") else str(c.category)
+            group_key = f"other:{c_type}:{cat_val}"
+
+        grouped_buckets.setdefault(group_key, []).append(c)
+
+    distinct_conflicts: List[DetectedConflict] = []
+    conflict_idx = 1
+    severity_order = {ConflictSeverity.HIGH: 3, ConflictSeverity.MEDIUM: 2, ConflictSeverity.LOW: 1}
+
+    for group_key, bucket in grouped_buckets.items():
+        primary = bucket[0]
+        # Union parties
+        all_parties: List[str] = []
+        for c in bucket:
+            for p in c.parties_involved:
+                if p not in all_parties:
+                    all_parties.append(p)
+
+        # Union evidence without duplicate quotes
+        all_evidence: List[EvidenceItem] = []
+        seen_quotes = set()
+        for c in bucket:
+            for ev in c.evidence:
+                quote_key = (ev.member_name.lower().strip(), ev.quote.strip())
+                if quote_key not in seen_quotes:
+                    seen_quotes.add(quote_key)
+                    all_evidence.append(ev)
+
+        # Max severity among grouped items
+        max_sev = max(bucket, key=lambda c: severity_order.get(c.severity, 1)).severity
+
+        # Clean title <= 60 chars
+        clean_title = clean_issue_title(primary.title)
+        if len(clean_title) > 60:
+            clean_title = clean_title[:60].rsplit(" ", 1)[0].rstrip(" -:,")
+
+        parties_str = ", ".join(all_parties)
+        if len(bucket) > 1:
+            reasoning = f"Multiple teammates ({parties_str}) have misaligned expectations regarding {clean_title.lower()}."
+            impact = f"Blocks coordinated delivery between {parties_str} without team alignment."
+        else:
+            reasoning = primary.severity_reasoning
+            impact = primary.impact_description
+
+        distinct_conflicts.append(
+            DetectedConflict(
+                conflict_id=f"CONF-{conflict_idx:02d}",
+                title=clean_title,
+                conflict_type=primary.conflict_type,
+                category=primary.category,
+                severity=max_sev,
+                severity_reasoning=reasoning,
+                parties_involved=all_parties,
+                evidence=all_evidence,
+                impact_description=impact,
+            )
+        )
+        conflict_idx += 1
+
+    return distinct_conflicts
 
 
 def create_conflict_adk_agent() -> Agent:
@@ -140,7 +292,9 @@ class ConflictDetectionService:
                 if final_text.strip():
                     data = json.loads(final_text)
                     self.last_execution_mode = "LIVE_GEMINI"
-                    return ConflictDetectionOutput.model_validate(data)
+                    out = ConflictDetectionOutput.model_validate(data)
+                    out.conflicts = clean_and_group_conflicts(out.conflicts)
+                    return out
 
             # Direct fallback if ADK runner stream is empty
             config = types.GenerateContentConfig(
@@ -157,7 +311,9 @@ class ConflictDetectionService:
             if response.text:
                 data = json.loads(response.text)
                 self.last_execution_mode = "LIVE_GEMINI"
-                return ConflictDetectionOutput.model_validate(data)
+                out = ConflictDetectionOutput.model_validate(data)
+                out.conflicts = clean_and_group_conflicts(out.conflicts)
+                return out
             else:
                 raise ValueError("Empty response received from Gemini model.")
         except Exception as e:
@@ -176,7 +332,40 @@ class ConflictDetectionService:
         compatible_diffs: List[str] = []
         gaps: List[str] = list(perspective_data.identified_gaps)
 
-        perspectives = perspective_data.perspectives
+        # Consolidate perspectives by unique member name so multi-message users do not generate self-conflicts
+        merged_perspectives: Dict[str, ExtractedPerspective] = {}
+        for p in perspective_data.perspectives:
+            key = p.member_name.strip().lower()
+            if key not in merged_perspectives:
+                merged_perspectives[key] = ExtractedPerspective(
+                    member_name=p.member_name.strip(),
+                    goals=list(p.goals),
+                    priorities=list(p.priorities),
+                    responsibilities=list(p.responsibilities),
+                    deadlines=list(p.deadlines),
+                    ambiguities_or_missing_details=list(p.ambiguities_or_missing_details),
+                    key_quotes=list(p.key_quotes),
+                )
+            else:
+                existing = merged_perspectives[key]
+                existing.goals.extend(p.goals)
+                existing.priorities.extend(p.priorities)
+                existing.responsibilities.extend(p.responsibilities)
+                existing.deadlines.extend(p.deadlines)
+                existing.ambiguities_or_missing_details.extend(p.ambiguities_or_missing_details)
+                for q in p.key_quotes:
+                    if q not in existing.key_quotes:
+                        existing.key_quotes.append(q)
+
+        perspectives = list(merged_perspectives.values())
+        if len(perspectives) < 2:
+            return ConflictDetectionOutput(
+                conflicts=[],
+                compatible_differences=["Single team member response or no perspectives provided."],
+                critical_information_gaps=perspective_data.identified_gaps,
+                synthesis_summary="Insufficient distinct perspectives to compare for team alignment (at least 2 teammates required).",
+            )
+
         day_rank = {
             "monday": 1,
             "tuesday": 2,
@@ -439,13 +628,16 @@ class ConflictDetectionService:
         if not any(d for p in perspectives for d in p.deadlines if "backend" in d.milestone.lower()):
             gaps.append("Backend integration and deployment milestones were not explicitly specified in member statements.")
 
+        # Clean self-conflicts and group duplicate findings
+        cleaned_conflicts = clean_and_group_conflicts(conflicts)
+
         synthesis_summary = (
-            f"Detected {len(conflicts)} alignment issue(s) across {len(perspectives)} participants. "
-            + (f"Identified {len([c for c in conflicts if c.severity == ConflictSeverity.HIGH])} blocking deadline contradiction(s)." if conflicts else "No severe contradictions detected.")
+            f"Detected {len(cleaned_conflicts)} distinct alignment issue(s) across {len(perspectives)} participants. "
+            + (f"Identified {len([c for c in cleaned_conflicts if c.severity == ConflictSeverity.HIGH])} blocking contradiction(s)." if cleaned_conflicts else "No severe contradictions detected.")
         )
 
         return ConflictDetectionOutput(
-            conflicts=conflicts,
+            conflicts=cleaned_conflicts,
             compatible_differences=compatible_diffs,
             critical_information_gaps=gaps,
             synthesis_summary=synthesis_summary,

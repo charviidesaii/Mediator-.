@@ -78,6 +78,7 @@ CREATE TABLE IF NOT EXISTS confirmed_decisions (
     id TEXT PRIMARY KEY,
     project_id TEXT NOT NULL,
     resolution_id TEXT NOT NULL,
+    conflict_id TEXT,
     status TEXT NOT NULL,
     decision_text TEXT NOT NULL,
     decided_by TEXT NOT NULL,
@@ -121,6 +122,12 @@ class StorageService:
             os.makedirs(os.path.dirname(os.path.abspath(self.db_path)), exist_ok=True)
             async with aiosqlite.connect(self.db_path) as db:
                 await db.executescript(MIGRATION_DDL)
+                # Safely add conflict_id column if migrating an existing SQLite database
+                try:
+                    await db.execute("ALTER TABLE confirmed_decisions ADD COLUMN conflict_id TEXT")
+                    await db.commit()
+                except Exception:
+                    pass
                 await db.commit()
             logger.info(f"SQLite persistent storage initialized at: {self.db_path}")
 
@@ -323,7 +330,30 @@ class StorageService:
                         )
             return responses
 
-        return self._responses.get(project_id, [])
+    async def update_response_text(self, response_id: str, new_text: str) -> bool:
+        """Updates the raw_text of an existing member response (for edited Slack messages)."""
+        await self.initialize()
+        clean_text = new_text.strip()
+        if not clean_text:
+            return False
+
+        now = datetime.now(timezone.utc)
+        if self.backend == "sqlite":
+            async with aiosqlite.connect(self.db_path) as db:
+                cursor = await db.execute(
+                    "UPDATE member_responses SET raw_text = ?, submitted_at = ? WHERE id = ?",
+                    (clean_text, now.isoformat(), response_id),
+                )
+                await db.commit()
+                return cursor.rowcount > 0
+        else:
+            for project_responses in self._responses.values():
+                for resp in project_responses:
+                    if resp.id == response_id:
+                        resp.raw_text = clean_text
+                        resp.submitted_at = now
+                        return True
+        return False
 
     # -------------------------------------------------------------
     # Alignment Analyses (AI-Generated Interpretations & Proposals)
@@ -410,10 +440,12 @@ class StorageService:
         }
 
         now = datetime.now(timezone.utc)
+        conflict_id = valid_resolution.conflict_id
         confirmed = ConfirmedDecision(
             id=str(uuid.uuid4()),
             project_id=project_id,
             resolution_id=action.resolution_id,
+            conflict_id=conflict_id,
             status=status_mapping[action.action],
             decision_text=decision_text,
             decided_by=action.decided_by.strip(),
@@ -424,8 +456,8 @@ class StorageService:
         if self.backend == "sqlite":
             async with aiosqlite.connect(self.db_path) as db:
                 await db.execute(
-                    "INSERT INTO confirmed_decisions (id, project_id, resolution_id, status, decision_text, decided_by, decided_at, notes) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-                    (confirmed.id, project_id, confirmed.resolution_id, confirmed.status.value, confirmed.decision_text, confirmed.decided_by, now.isoformat(), confirmed.notes),
+                    "INSERT INTO confirmed_decisions (id, project_id, resolution_id, conflict_id, status, decision_text, decided_by, decided_at, notes) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    (confirmed.id, project_id, confirmed.resolution_id, confirmed.conflict_id, confirmed.status.value, confirmed.decision_text, confirmed.decided_by, now.isoformat(), confirmed.notes),
                 )
                 await db.commit()
         else:
@@ -437,20 +469,29 @@ class StorageService:
 
     async def get_decisions(self, project_id: str) -> List[ConfirmedDecision]:
         await self.initialize()
+        # Build resolution_id -> conflict_id lookup from latest report for backwards compatibility
+        report = await self.get_latest_report(project_id)
+        res_to_conflict: Dict[str, str] = {}
+        if report:
+            for r in report.proposed_resolutions:
+                res_to_conflict[r.resolution_id] = r.conflict_id
+
         if self.backend == "sqlite":
             decisions: List[ConfirmedDecision] = []
             async with aiosqlite.connect(self.db_path) as db:
                 db.row_factory = aiosqlite.Row
                 async with db.execute(
-                    "SELECT id, project_id, resolution_id, status, decision_text, decided_by, decided_at, notes FROM confirmed_decisions WHERE project_id = ? ORDER BY decided_at",
+                    "SELECT id, project_id, resolution_id, conflict_id, status, decision_text, decided_by, decided_at, notes FROM confirmed_decisions WHERE project_id = ? ORDER BY decided_at",
                     (project_id,),
                 ) as cursor:
                     async for row in cursor:
+                        c_id = row["conflict_id"] or res_to_conflict.get(row["resolution_id"])
                         decisions.append(
                             ConfirmedDecision(
                                 id=row["id"],
                                 project_id=row["project_id"],
                                 resolution_id=row["resolution_id"],
+                                conflict_id=c_id,
                                 status=DecisionStatus(row["status"]),
                                 decision_text=row["decision_text"],
                                 decided_by=row["decided_by"],
@@ -460,7 +501,75 @@ class StorageService:
                         )
             return decisions
 
+        for d in self._decisions.get(project_id, []):
+            if not d.conflict_id and d.resolution_id in res_to_conflict:
+                d.conflict_id = res_to_conflict[d.resolution_id]
         return self._decisions.get(project_id, [])
+
+    async def get_conflict_statuses(self, project_id: str) -> Dict[str, Dict[str, Any]]:
+        """Tracks the status of each conflict: UNRESOLVED, PROPOSED, APPROVED, REJECTED, MODIFIED, REOPENED.
+
+        - Links approved decisions to corresponding conflict IDs.
+        - Reopens a conflict only when new evidence submitted after decision date meaningfully
+          contradicts or touches the conflict topic/parties.
+        """
+        report = await self.get_latest_report(project_id)
+        decisions = await self.get_decisions(project_id)
+        responses = await self.get_responses(project_id)
+
+        statuses: Dict[str, Dict[str, Any]] = {}
+        if not report:
+            return statuses
+
+        res_map = {r.resolution_id: r for r in report.proposed_resolutions}
+        conflict_to_res = {r.conflict_id: r for r in report.proposed_resolutions}
+
+        # Index decisions by conflict_id (latest decision wins)
+        decision_by_conflict: Dict[str, ConfirmedDecision] = {}
+        for d in decisions:
+            c_id = d.conflict_id or (res_map[d.resolution_id].conflict_id if d.resolution_id in res_map else None)
+            if c_id:
+                decision_by_conflict[c_id] = d
+
+        for c_id, res in conflict_to_res.items():
+            decision = decision_by_conflict.get(c_id)
+            if decision:
+                # Check for reopening: new evidence submitted AFTER decision timestamp
+                is_reopened = False
+                if decision.status in [DecisionStatus.APPROVED, DecisionStatus.MODIFIED]:
+                    newer_responses = [
+                        resp for resp in responses
+                        if resp.submitted_at and resp.submitted_at > decision.decided_at
+                    ]
+                    for resp in newer_responses:
+                        p_match = any(p.lower() in resp.member_name.lower() for p in res.impacted_members)
+                        t_match = any(
+                            word in resp.raw_text.lower()
+                            for word in res.conflict_title.lower().split()
+                            if len(word) > 3
+                        )
+                        if p_match or t_match:
+                            is_reopened = True
+                            break
+
+                current_status = "REOPENED" if is_reopened else decision.status.value
+                statuses[c_id] = {
+                    "conflict_id": c_id,
+                    "resolution_id": res.resolution_id,
+                    "status": current_status,
+                    "decision": decision,
+                    "conflict_title": res.conflict_title,
+                }
+            else:
+                statuses[c_id] = {
+                    "conflict_id": c_id,
+                    "resolution_id": res.resolution_id,
+                    "status": "PROPOSED",
+                    "decision": None,
+                    "conflict_title": res.conflict_title,
+                }
+
+        return statuses
 
     # -------------------------------------------------------------
     # Slack Channel to Project Mappings

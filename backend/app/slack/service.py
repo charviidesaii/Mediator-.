@@ -87,12 +87,12 @@ class SlackIntegrationService:
         thread_ts: Optional[str] = None,
         limit: int = 25,
         bot_user_id: Optional[str] = None,
-    ) -> List[Tuple[str, str]]:
+    ) -> List[Tuple[str, str, str]]:
         """Extracts substantive human messages from a channel or thread.
 
-        Returns a list of tuples: (member_name, cleaned_statement)
+        Returns a list of tuples: (member_name, cleaned_statement, message_ts)
         """
-        extracted: List[Tuple[str, str]] = []
+        extracted: List[Tuple[str, str, str]] = []
 
         try:
             if thread_ts:
@@ -116,6 +116,7 @@ class SlackIntegrationService:
             for msg in messages:
                 user = msg.get("user")
                 text = msg.get("text", "")
+                ts = str(msg.get("ts", ""))
                 subtype = msg.get("subtype")
                 is_bot = bool(msg.get("bot_id")) or (bot_user_id and user == bot_user_id)
 
@@ -129,7 +130,7 @@ class SlackIntegrationService:
                     continue
 
                 user_name = await self.resolve_user_name(client, user)
-                extracted.append((user_name, cleaned))
+                extracted.append((user_name, cleaned, ts))
 
         except Exception as e:
             logger.error(f"Error fetching Slack messages from channel {channel_id}: {e}")
@@ -140,41 +141,98 @@ class SlackIntegrationService:
     async def ingest_messages_into_project(
         self,
         project_id: str,
-        messages: List[Tuple[str, str]],
+        messages: List[Any],
         source: str = "slack",
+        channel_id: Optional[str] = None,
+        storage: Optional[Any] = None,
     ) -> int:
-        """Ingests extracted statements into the project workspace, ensuring members exist."""
-        project = await storage_service.get_project(project_id)
+        """Ingests extracted statements into the project workspace with deduplication and edit preservation."""
+        store = storage or storage_service
+        project = await store.get_project(project_id)
         if not project:
             raise ValueError(f"Project with ID '{project_id}' not found.")
+
+        if not channel_id:
+            mapping = await store.get_channel_mapping_for_project(project_id)
+            if mapping:
+                channel_id = mapping.get("channel_id")
+
+        existing_responses = await store.get_responses(project_id)
+        # Stable source identifier map: source -> MemberResponse
+        existing_by_source: Dict[str, Any] = {
+            r.source: r for r in existing_responses if r.source and r.source.startswith("slack:")
+        }
+        # Content deduplication set: (member_name.lower(), raw_text)
+        existing_by_content: Set[Tuple[str, str]] = {
+            (r.member_name.lower().strip(), r.raw_text.strip()) for r in existing_responses
+        }
 
         existing_members = {m.name.lower(): m for m in project.members}
         added_count = 0
 
-        for user_name, text in messages:
+        for item in messages:
+            if isinstance(item, (list, tuple)) and len(item) >= 3:
+                user_name, text, msg_ts = item[0], item[1], str(item[2])
+            elif isinstance(item, (list, tuple)) and len(item) == 2:
+                user_name, text, msg_ts = item[0], item[1], None
+            else:
+                continue
+
+            clean_user = user_name.strip()
+            clean_text = text.strip()
+            if not clean_text:
+                continue
+
+            # Stable identifier for Slack messages: slack:channel_id:msg_ts
+            if msg_ts:
+                stable_source = f"slack:{channel_id}:{msg_ts}" if channel_id else f"slack:{msg_ts}"
+                if stable_source in existing_by_source:
+                    existing_resp = existing_by_source[stable_source]
+                    if existing_resp.raw_text.strip() == clean_text:
+                        # Identical message already saved — skip duplicate
+                        continue
+                    else:
+                        # Message was edited in Slack — update existing response
+                        await store.update_response_text(existing_resp.id, clean_text)
+                        existing_by_content.discard(
+                            (existing_resp.member_name.lower().strip(), existing_resp.raw_text.strip())
+                        )
+                        existing_by_content.add((clean_user.lower(), clean_text))
+                        existing_resp.raw_text = clean_text
+                        continue
+            else:
+                stable_source = source
+
+            # Content deduplication: skip if user already said this exact text
+            if (clean_user.lower(), clean_text) in existing_by_content:
+                continue
+
             # Register member if not already registered
-            if user_name.lower() not in existing_members:
+            if clean_user.lower() not in existing_members:
                 try:
-                    new_member = await storage_service.add_team_member(
+                    new_member = await store.add_team_member(
                         project_id=project_id,
-                        member_in=TeamMemberCreate(name=user_name, role="Slack Participant"),
+                        member_in=TeamMemberCreate(name=clean_user, role="Slack Participant"),
                     )
                     if new_member:
-                        existing_members[user_name.lower()] = new_member
+                        existing_members[clean_user.lower()] = new_member
                 except Exception as mem_err:
-                    logger.debug(f"Member {user_name} already registered or conflict: {mem_err}")
+                    logger.debug(f"Member {clean_user} already registered or conflict: {mem_err}")
 
             # Store the perspective response
             try:
-                await storage_service.add_response(
+                new_resp = await store.add_response(
                     project_id=project_id,
-                    member_name=user_name,
-                    raw_text=text,
-                    source=source,
+                    member_name=clean_user,
+                    raw_text=clean_text,
+                    source=stable_source,
                 )
                 added_count += 1
+                existing_by_content.add((clean_user.lower(), clean_text))
+                if msg_ts:
+                    existing_by_source[stable_source] = new_resp
             except Exception as resp_err:
-                logger.warning(f"Error storing response from {user_name}: {resp_err}")
+                logger.warning(f"Error storing response from {clean_user}: {resp_err}")
 
         return added_count
 
@@ -198,7 +256,9 @@ class SlackIntegrationService:
                 bot_user_id=bot_user_id,
             )
             if messages:
-                await self.ingest_messages_into_project(project.id, messages, source="slack")
+                await self.ingest_messages_into_project(
+                    project.id, messages, source="slack", channel_id=channel_id
+                )
 
         # Run multi-agent pipeline
         return await analysis_service.trigger_analysis(project.id)
@@ -256,6 +316,7 @@ class SlackIntegrationService:
         # 2. Try splitting at natural grammatical clause boundaries
         clean = stripped.rstrip(".!?,:; ")
         clause_delims = [
+            ": ",
             "; ",
             " — ",
             " - ",
@@ -264,6 +325,7 @@ class SlackIntegrationService:
             ", specifically regarding ",
             ", specifically ",
             ", focusing on ",
+            ", or ",
             ", and after ",
             ", and ",
             ", while ",
@@ -271,6 +333,8 @@ class SlackIntegrationService:
             ", which ",
             ", allowing ",
             ", leading to ",
+            " to establish ",
+            " during the next sync ",
             ", to ensure ",
             ", to allow ",
             " to define ",
@@ -293,6 +357,87 @@ class SlackIntegrationService:
         return clean_sent
 
     @staticmethod
+    def remove_technical_jargon(text: str) -> str:
+        """Translates technical/engineering jargon into friendly, conversational teammate phrasing."""
+        if not text:
+            return ""
+        t = text
+
+        # Replace QA and testing jargon
+        t = re.sub(r"\bQA\s+gate\b", "testing buffer", t, flags=re.IGNORECASE)
+        t = re.sub(r"\bQA\s+testing\b", "testing", t, flags=re.IGNORECASE)
+        t = re.sub(r"\bQA\s+dependency\b", "testing schedule", t, flags=re.IGNORECASE)
+        t = re.sub(r"\bQA\s+engineers?\b", "testers", t, flags=re.IGNORECASE)
+        t = re.sub(r"\bQA\b", "testing", t)
+        t = re.sub(r"\bQuality\s+Assurance\b", "Testing", t, flags=re.IGNORECASE)
+        t = re.sub(r"\bregression\s+(?:analysis|testing)\b", "testing", t, flags=re.IGNORECASE)
+
+        # Replace dependency, architectural, and workflow jargon
+        t = re.sub(r"\bdeadline\s+sequence\s+inversion\b", "misaligned order of tasks", t, flags=re.IGNORECASE)
+        t = re.sub(r"\bdependency\s+inversion\b", "schedule conflict", t, flags=re.IGNORECASE)
+        t = re.sub(r"\bprecedes\b", "comes before", t, flags=re.IGNORECASE)
+        t = re.sub(r"\bunbudgeted\b", "unplanned", t, flags=re.IGNORECASE)
+        t = re.sub(r"\blogistical\s+bottlenecks\b", "delays", t, flags=re.IGNORECASE)
+        t = re.sub(r"\bsingle-owner\s+accountability\b", "clear ownership", t, flags=re.IGNORECASE)
+        t = re.sub(r"\bsynchronized\s+milestone\s+schedule\b", "coordinated schedule", t, flags=re.IGNORECASE)
+        t = re.sub(r"\bdeliverables\b", "tasks", t, flags=re.IGNORECASE)
+        t = re.sub(r"\bdeliverable\b", "task", t, flags=re.IGNORECASE)
+
+        # Clean multiple spaces
+        t = re.sub(r"\s+", " ", t).strip()
+        return t
+
+    @staticmethod
+    def _get_topic_and_icon(c: DetectedConflict) -> Tuple[str, str]:
+        """Returns (emoji, conversational_topic_label) for a conflict."""
+        raw_title = (c.title or "").strip()
+        tl = raw_title.lower()
+        impact = (c.impact_description or "").lower()
+        full = f"{tl} {impact}"
+
+        # 1. Project scope
+        if any(w in full for w in ["scope", "recommendation", "mvp", "feature", "in-scope", "out-of-scope"]):
+            return "🎯", "Project scope"
+
+        # 2. Responsibilities / Ownership
+        if any(w in full for w in ["owner", "ownership", "responsibility", "responsibilities", "unassigned", "accountability", "role"]):
+            return "👥", "Responsibilities"
+
+        # 3. Deadlines / Timeline
+        if any(w in full for w in ["deadline", "timeline", "schedule", "completion date", "timeframe", "dates"]):
+            # If testing or launch is explicit, prioritize those
+            if not any(w in full for w in ["qa", "testing", "launch", "ship"]):
+                return "📅", "Deadlines"
+
+        # 4. Testing
+        if any(w in full for w in ["test", "testing", "qa", "quality assurance", "regression"]):
+            return "🧪", "Testing"
+
+        # 5. Launch
+        if any(w in full for w in ["launch", "release", "ship", "deploy", "deployment"]):
+            return "🚀", "Launch"
+
+        # 6. Deadlines fallback if had dates or demo
+        if any(w in full for w in ["deadline", "timeline", "schedule", "demo"]):
+            return "📅", "Deadlines"
+
+        # 7. Design
+        if any(w in full for w in ["design", "figma", "ui", "ux"]):
+            return "🎨", "Design"
+
+        # 8. Meeting
+        if any(w in full for w in ["meeting", "sync", "standup", "huddle"]):
+            return "💬", "Meeting"
+
+        # 9. Priorities
+        if any(w in full for w in ["priorit", "urgency", "tradeoff"]):
+            return "⚡", "Priorities"
+
+        # Default fallback
+        extracted = SlackIntegrationService._extract_topic(c)
+        return "⚠️", extracted or "Workflow"
+
+    @staticmethod
     def _extract_topic(c: DetectedConflict) -> str:
         """Extracts a concise, standardized topic category for a conflict."""
         raw_title = c.title or ""
@@ -300,12 +445,14 @@ class SlackIntegrationService:
             topic_cand = raw_title.split(":", 1)[0].strip()
             topic_cand = re.sub(r"[*_`]", "", topic_cand).strip()
             tl = topic_cand.lower()
-            if "deadline sequence" in tl or "timeline" in tl:
-                return "Timeline"
-            if "unclear task ownership" in tl or "unassigned" in tl or "ownership" in tl:
-                return "Ownership"
+            if "deadline sequence" in tl or "timeline" in tl or "deadline" in tl:
+                return "Deadlines"
+            if "unclear task ownership" in tl or "unassigned" in tl or "ownership" in tl or "responsibility" in tl:
+                return "Responsibilities"
             if "quality assurance" in tl or bool(re.search(r"\bqa\b", tl)) or "testing" in tl:
                 return "Testing"
+            if "scope" in tl:
+                return "Project scope"
             if len(topic_cand) <= 18:
                 return topic_cand
 
@@ -313,90 +460,108 @@ class SlackIntegrationService:
         if bool(re.search(r"\bqa\b", tl)) or "testing" in tl:
             return "Testing"
         if "scope" in tl or "recommendation" in tl or bool(re.search(r"\bmvp\b", tl)) or "feature" in tl:
-            return "Scope"
+            return "Project scope"
         if "integration" in tl or bool(re.search(r"\bapi\b", tl)):
-            return "Integration"
+            return "Responsibilities"
         if "deadline" in tl or "timeline" in tl or "schedule" in tl or "completion" in tl or "demo" in tl:
-            return "Timeline"
+            return "Deadlines"
         if "launch" in tl or "release" in tl or "ship" in tl:
             return "Launch"
         if "design" in tl or "figma" in tl or bool(re.search(r"\bui\b", tl)):
             return "Design"
-        if "test" in tl:
-            return "Testing"
-        if "deploy" in tl:
-            return "Deployment"
         if "owner" in tl or "responsibility" in tl:
-            return "Ownership"
+            return "Responsibilities"
         if "meeting" in tl or "sync" in tl:
             return "Meeting"
 
-        # Fallback to conflict type
         type_name = c.conflict_type.value.replace("_", " ").title().split()[0]
-        return type_name or "Issue"
+        return type_name or "Workflow"
 
     @staticmethod
-    def _format_conflict_bullet(c: DetectedConflict, max_chars: int = 100) -> str:
-        """Formats a single conflict into a short, complete grammatical sentence: '• Topic: Sentence.'"""
-        topic = SlackIntegrationService._extract_topic(c)
+    def _format_conflict_bullet(c: DetectedConflict, max_chars: int = 85) -> str:
+        """Formats a single conflict into a short, complete sentence: '- {icon} *{Topic}:* {Sentence}.'"""
+        icon, topic_label = SlackIntegrationService._get_topic_and_icon(c)
         raw_title = (c.title or "").strip()
+        tl = raw_title.lower()
 
-        # Case A: If raw_title already has a concise colon statement (e.g. "Launch: Team expects different dates (Thu–Sun).")
+        # Check for colon in raw_title
+        stmt = ""
         if ":" in raw_title:
             parts = raw_title.split(":", 1)
-            stmt = parts[1].strip().rstrip(".!?,:; ")
-            sents = SlackIntegrationService._split_sentences(stmt)
-            if sents:
-                shortened = SlackIntegrationService._shorten_sentence_safely(sents[0], max_chars=85)
-                lower_stmt = shortened.lower()
-                if any(w in lower_stmt for w in ["expects", "conflicts", "differs", "precedes", "unclear", "no ", "is ", "are ", "leaves", "disagree"]):
-                    return f"• {topic}: {shortened}"
+            candidate = parts[1].strip()
+            cand_lower = candidate.lower()
+            # If candidate is a bare noun phrase like "Frontend delivery", expand to a complete sentence
+            if any(cand_lower.startswith(w) for w in ["frontend", "backend", "deployment", "integration", "quality assurance", "testing", "design", "ui"]) and not any(v in cand_lower for v in ["is", "are", "expects", "conflicts", "unclear", "unconfirmed", "no confirmed", "needs", "disagree"]):
+                stmt = f"{candidate} ownership is unclear."
+            elif len(candidate) >= 15:
+                stmt = candidate
 
-        # Case B: Semantic pattern matching on common conflict title phrases
-        tl = raw_title.lower()
-        if "scope" in tl and "recommendation" in tl:
-            return f"• {topic}: Team disagrees on including personalized recommendations in MVP."
-        if "integration" in tl and ("unassigned" in tl or "responsibility" in tl or "owner" in tl):
-            return f"• {topic}: No confirmed owner for frontend-backend API integration."
-        if ("timeline" in tl or "schedule" in tl or "time" in tl) and ("testing" in tl or "test" in tl or bool(re.search(r"\bqa\b", tl))):
-            return f"• {topic}: Integration schedule conflicts with required testing time."
-        if ("deadline" in tl or "completion" in tl or "demo" in tl) and ("contradict" in tl or "conflict" in tl):
-            return f"• {topic}: Team members have conflicting dates for completion and demo."
-        if "design" in tl or "figma" in tl or bool(re.search(r"\bui\b", tl)):
-            return f"• {topic}: Teammates are working with different UI design versions."
-        if "test" in tl or bool(re.search(r"\bqa\b", tl)):
-            return f"• {topic}: Current schedule leaves inadequate time for QA testing."
-        if "meeting" in tl:
-            return f"• {topic}: Team members have conflicting dates for the next sync meeting."
-        if "deploy" in tl and ("unassigned" in tl or "unclear" in tl or "owner" in tl):
-            return f"• {topic}: Deployment responsibility is unconfirmed across team members."
-        if "launch" in tl or "ship" in tl:
-            return f"• {topic}: Team members expect different target launch dates."
-        if c.parties_involved and len(c.parties_involved) >= 2:
-            p_str = " and ".join(c.parties_involved[:2])
-            if "ownership" in tl or "responsibility" in tl:
-                return f"• {topic}: Task ownership is unconfirmed between {p_str}."
-            if "dependency" in tl:
-                return f"• {topic}: Quality assurance dependency between {p_str} is unbudgeted."
+        # Semantic pattern mapping for natural conversational sentences if no colon statement
+        if not stmt:
+            if "scope" in tl or "recommendation" in tl or "mvp" in tl or "feature" in tl:
+                stmt = "Teammates disagree on demo features."
+            elif any(w in tl for w in ["deadline", "timeline", "schedule", "completion", "target deadline"]):
+                stmt = "Teammates expect different completion dates."
+            elif any(w in tl for w in ["unbudgeted", "buffer", "inadequate", "short"]) and any(w in tl for w in ["test", "qa"]):
+                stmt = "Not enough time may be reserved for testing."
+            elif "ownership" in tl or "responsibility" in tl:
+                task_cand = ""
+                if ":" in raw_title:
+                    task_cand = raw_title.split(":", 1)[1].strip()
+                    task_cand = re.sub(r"\s+Between\s+.*$", "", task_cand, flags=re.IGNORECASE).strip()
+                if task_cand and len(task_cand) <= 30:
+                    stmt = f"{task_cand} ownership is unclear."
+                else:
+                    stmt = "Task ownership is unclear."
+            elif "test" in tl or "qa" in tl:
+                stmt = "Not enough time may be reserved for testing."
+            elif "design" in tl or "figma" in tl or "ui" in tl:
+                stmt = "Teammates are working with different UI design versions."
+            elif "launch" in tl or "ship" in tl:
+                stmt = "Team members expect different target launch dates."
+            elif "meeting" in tl or "sync" in tl:
+                stmt = "Team members have conflicting dates for the next sync meeting."
+            elif c.impact_description and len(c.impact_description) >= 15:
+                stmt = c.impact_description
+            else:
+                stmt = raw_title
 
-        # Case C: Check impact description for a clean sentence
-        impact = c.impact_description or ""
-        impact_sents = SlackIntegrationService._split_sentences(impact)
-        for s in impact_sents:
-            if 25 <= len(s) <= 85 and not s.lower().startswith("direct delivery blocker"):
-                if not s.lower().startswith(f"{topic.lower()}:"):
-                    return f"• {topic}: {s}"
+        # Clean jargon and conversationalize raw patterns
+        clean_stmt = SlackIntegrationService.remove_technical_jargon(stmt)
+        # Strip trailing ': Team needs alignment.'
+        clean_stmt = re.sub(r":\s*team needs alignment\.?$", ".", clean_stmt, flags=re.IGNORECASE)
+        cl_low = clean_stmt.lower()
+        if " vs " in cl_low and ("(" in clean_stmt or "saturday" in cl_low or "sunday" in cl_low):
+            clean_stmt = re.sub(r"\(([^)]+)\)", r"expects \1", clean_stmt)
+            clean_stmt = re.sub(r"\s+vs\s+", ", while ", clean_stmt)
+        elif cl_low.startswith("deployment between "):
+            clean_stmt = "Deployment ownership is unconfirmed between " + clean_stmt[19:]
+        elif "unplanned testing dependency between " in cl_low:
+            clean_stmt = re.sub(
+                r"unplanned testing dependency between ([^.]+)",
+                r"Testing schedule between \1 is unplanned",
+                clean_stmt,
+                flags=re.IGNORECASE,
+            )
 
-        # Case D: Fallback to cleaned sentence from title or impact
-        source_text = c.impact_description or c.severity_reasoning or raw_title
-        sents = SlackIntegrationService._split_sentences(source_text)
-        first_sent = sents[0] if sents else f"{raw_title.rstrip('.!?,:; ')}."
-        shortened = SlackIntegrationService._shorten_sentence_safely(first_sent, max_chars=85)
-        return f"• {topic}: {shortened}"
+        sents = SlackIntegrationService._split_sentences(clean_stmt)
+        first_sent = sents[0] if sents else f"{clean_stmt.rstrip('.!?,:; ')}."
+        shortened = SlackIntegrationService._shorten_sentence_safely(first_sent, max_chars=max_chars)
+
+        clean_end = shortened.rstrip(".!?,:; ")
+        for dangle in [" and", " the", " on", " to", " with", " or", " but", " for"]:
+            if clean_end.endswith(dangle):
+                clean_end = clean_end[: -len(dangle)].rstrip(".!?,:; ")
+        shortened = f"{clean_end}."
+
+        if len(shortened) > 1:
+            shortened = shortened[0].upper() + shortened[1:]
+
+        return f"- *{topic_label}:* {shortened}"
 
     @staticmethod
-    def _format_recommendation_bullet(rec_text: str, max_chars: int = 100) -> str:
-        """Formats a single actionable recommendation into one complete sentence: '• Action sentence.'"""
+    def _format_recommendation_bullet(rec_text: str, max_chars: int = 90) -> str:
+        """Formats a single recommendation into a conversational teammate sentence: '- Action sentence.'"""
         cleaned = rec_text.strip()
         # Strip leading markdown labels like **CONFIRM deployment owner:**
         cleaned = re.sub(r"^\*\*[^*]+:\*\*\s*", "", cleaned)
@@ -407,18 +572,60 @@ class SlackIntegrationService:
         # Strip "Review RES-X and "
         cleaned = re.sub(r"^Review\s+RES-\d+\s+and\s+", "", cleaned, flags=re.IGNORECASE)
 
-        # Convert leading noun phrases to imperative sentences
-        if cleaned.lower().startswith("decision on "):
+        # Remove technical jargon first
+        cleaned = SlackIntegrationService.remove_technical_jargon(cleaned)
+
+        # If colon present with a high-level action prefix, pick the concise action statement
+        if ":" in cleaned:
+            parts = cleaned.split(":", 1)
+            first_p = parts[0].strip()
+            second_p = parts[1].strip()
+            if 20 <= len(first_p) <= 85 and any(w in first_p.lower() for w in ["schedule", "deadline", "ownership", "confirm", "agree", "testing", "scope", "gate"]):
+                cleaned = first_p
+            elif 20 <= len(second_p) <= 85:
+                cleaned = second_p
+
+        # Shorten long lists of 3+ names to 'across teammates'
+        cleaned = re.sub(
+            r"(?:between|accommodating|across)\s+[A-Za-z\s]+,\s+[A-Za-z\s]+,\s+.*?(?=\s+(?:during|to|while|\.|$))",
+            "across teammates",
+            cleaned,
+            flags=re.IGNORECASE,
+        )
+
+        # Soften tone to helpful teammate recommendations
+        cl = cleaned.lower()
+        if cl.startswith("adopt a "):
+            cleaned = "Consider adopting a " + cleaned[8:]
+        elif cl.startswith("confirm which team member owns "):
+            cleaned = "Confirm who owns " + cleaned[31:]
+        elif cl.startswith("formally designate "):
+            cleaned = "Clarify whether to designate " + cleaned[19:]
+        elif cl.startswith("establish an explicit "):
+            cleaned = "Agree on an explicit " + cleaned[22:]
+        elif cl.startswith("establish "):
+            cleaned = "Agree on " + cleaned[10:]
+        elif cl.startswith("decision on "):
             cleaned = "Decide on " + cleaned[12:]
-        elif cleaned.lower().startswith("confirmation of "):
+        elif cl.startswith("confirmation of "):
             cleaned = "Confirm " + cleaned[16:]
-        elif cleaned.lower().startswith("discussion on "):
+        elif cl.startswith("discussion on "):
             cleaned = "Discuss " + cleaned[14:]
 
         sents = SlackIntegrationService._split_sentences(cleaned)
         first_sent = sents[0] if sents else f"{cleaned.rstrip('.!?,:; ')}."
-        shortened = SlackIntegrationService._shorten_sentence_safely(first_sent, max_chars=max_chars - 5)
-        return f"• {shortened}"
+        shortened = SlackIntegrationService._shorten_sentence_safely(first_sent, max_chars=max_chars)
+
+        clean_end = shortened.rstrip(".!?,:; ")
+        for dangle in [" and", " the", " on", " to", " with", " or", " but", " for", " during"]:
+            if clean_end.endswith(dangle):
+                clean_end = clean_end[: -len(dangle)].rstrip(".!?,:; ")
+        shortened = f"{clean_end}."
+
+        if len(shortened) > 1:
+            shortened = shortened[0].upper() + shortened[1:]
+
+        return f"- {shortened}"
 
     @staticmethod
     def calculate_visible_characters(blocks: List[Dict[str, Any]]) -> int:
@@ -456,24 +663,23 @@ class SlackIntegrationService:
     ) -> Dict[str, Any]:
         """Constructs concise Slack Block Kit blocks and markdown text under 1,000 visible characters.
 
-        - Bullet points instead of paragraphs.
-        - Shows alignment score and number of conflicts, including '4 of 5 conflicts' when hidden.
-        - Displays up to 4 conflicts prioritized by HIGH severity, each in ONE short complete sentence.
-        - Displays up to 3 actionable AI recommendations, each in ONE complete sentence.
-        - Never truncates sentences mid-thought or appends periods to incomplete phrases.
-        - Removes lowest-priority bullets when space runs out instead of cutting text.
-        - Preserves governance disclaimer and Open Dashboard button.
+        Teammate Check-In structure:
+        - 🤖 Mediator | Team Check-In
+        - Circle indicator: 🟢 (>=75%), 🟠 (30-74%), 🔴 (<30%)
+        - Up to 4 highest-priority conflicts sorted by HIGH severity, using emojis and complete sentences.
+        - Up to 3 AI-suggested next steps matched directly to proposed_resolutions.
+        - Governance disclaimer: '🔒 Suggestions only — your team makes the final call.'
+        - CTA deep-linking directly to the project's Decisions tab.
+        - Budgeting: Visible characters <= 1,000; drops lowest-priority bullet if space runs out.
         """
         synth = result.synthesis_output
         conflicts = result.conflicts_output.conflicts
         score = round(synth.alignment_score)
-        dashboard_url = f"{settings.dashboard_base_url.rstrip('/')}/?project_id={project_id}"
-
-        # 1. Header & Stats
-        header_title = "Mediator — Team Alignment"
         total_conflicts = len(conflicts)
+        header_title = "Mediator | Team Check-In"
+        decisions_url = f"{settings.dashboard_base_url.rstrip('/')}/?project_id={project_id}&tab=Decisions"
 
-        # 2. Conflicts (Prioritize HIGH severity, max 4)
+        # 1. Conflicts (Prioritize HIGH severity, max 4)
         severity_rank = {
             ConflictSeverity.HIGH: 0,
             ConflictSeverity.MEDIUM: 1,
@@ -486,47 +692,75 @@ class SlackIntegrationService:
 
         selected_conflicts = sorted_conflicts[:4]
         conflict_bullets: List[str] = [
-            self._format_conflict_bullet(c, max_chars=100) for c in selected_conflicts
-        ] or ["• No active conflicts detected."]
+            self._format_conflict_bullet(c, max_chars=85) for c in selected_conflicts
+        ]
+        if not conflict_bullets:
+            conflict_bullets = ["- *Everything aligned:* No active conflicts detected."]
 
-        # 3. Next Steps (Actionable AI recommendations, up to 3)
+        # 2. Next Steps (Actionable AI recommendations, up to 3)
+        # Requirement: Every suggested action comes directly from an actual proposed_resolutions record
+        # matched to the selected conflicts.
         rec_bullets: List[str] = []
         seen_recs: Set[str] = set()
 
-        # Gather candidates from human action items and proposed resolutions
-        candidate_recs: List[str] = []
-        if synth.human_action_items:
-            candidate_recs.extend(synth.human_action_items)
-        if synth.proposed_resolutions:
-            for r in synth.proposed_resolutions:
-                candidate_recs.append(r.recommended_solution)
+        res_by_conflict: Dict[str, Any] = {}
+        for r in synth.proposed_resolutions:
+            if r.conflict_id and r.conflict_id not in res_by_conflict:
+                res_by_conflict[r.conflict_id] = r
 
-        for rec in candidate_recs:
-            bullet = self._format_recommendation_bullet(rec, max_chars=100)
-            norm = bullet.lower().strip()
-            if norm not in seen_recs:
-                seen_recs.add(norm)
-                rec_bullets.append(bullet)
-            if len(rec_bullets) >= 3:
-                break
+        # Match to selected conflicts
+        for c in selected_conflicts:
+            if c.conflict_id in res_by_conflict:
+                r = res_by_conflict[c.conflict_id]
+                bullet = self._format_recommendation_bullet(r.recommended_solution)
+                norm = bullet.lower().strip()
+                if norm not in seen_recs:
+                    seen_recs.add(norm)
+                    rec_bullets.append(bullet)
+                if len(rec_bullets) >= 3:
+                    break
+
+        # Additional proposed resolutions from the report if space permits
+        if len(rec_bullets) < 3:
+            for r in synth.proposed_resolutions:
+                bullet = self._format_recommendation_bullet(r.recommended_solution)
+                norm = bullet.lower().strip()
+                if norm not in seen_recs:
+                    seen_recs.add(norm)
+                    rec_bullets.append(bullet)
+                if len(rec_bullets) >= 3:
+                    break
+
+        # Fallback to human action items if no proposed resolutions exist
+        if not rec_bullets and synth.human_action_items:
+            for item in synth.human_action_items:
+                bullet = self._format_recommendation_bullet(item)
+                norm = bullet.lower().strip()
+                if norm not in seen_recs:
+                    seen_recs.add(norm)
+                    rec_bullets.append(bullet)
+                if len(rec_bullets) >= 3:
+                    break
 
         if not rec_bullets:
-            rec_bullets.append("• Proceed with agreed team plans.")
+            rec_bullets.append("- Proceed with agreed team plans.")
 
-        # Compute initial stats line
-        shown_conflicts = len(selected_conflicts)
+        # 3. Score Line (Minimal, no emoji)
+        shown_conflicts = len(selected_conflicts) if conflicts else 0
         if shown_conflicts < total_conflicts:
-            stats_line = f"{score}% aligned | {shown_conflicts} of {total_conflicts} conflicts"
+            count_text = f"{shown_conflicts} of {total_conflicts} conflicts"
         else:
-            conflict_word = "conflict" if total_conflicts == 1 else "conflicts"
-            stats_line = f"{score}% aligned | {total_conflicts} {conflict_word}"
+            conflict_word = "potential conflict" if total_conflicts == 1 else "potential conflicts"
+            count_text = f"{total_conflicts} {conflict_word}"
 
-        # 4. Governance Disclaimer & Dashboard CTA
-        disclaimer_text = "_AI suggestions — team approval required._"
-        link_line = f"<{dashboard_url}|Open Mediator Dashboard>"
+        stats_line = f"{score}% aligned · {count_text}"
 
-        conflicts_section_text = "*Conflicts*\n" + "\n".join(conflict_bullets)
-        next_steps_section_text = "*Next Steps*\n" + "\n".join(rec_bullets)
+        # 4. Section Headings, Disclaimer, and CTA Link
+        disclaimer_text = "AI suggestions only · Team approval required"
+        link_line = f"<{decisions_url}|Review in TeamAlign →>"
+
+        conflicts_section_text = "*⚠️ What's not lining up*\n" + "\n".join(conflict_bullets)
+        next_steps_section_text = "*💡 Suggested next steps*\n" + "\n".join(rec_bullets)
 
         blocks: List[Dict[str, Any]] = [
             {
@@ -577,17 +811,17 @@ class SlackIntegrationService:
                     "type": "button",
                     "text": {
                         "type": "plain_text",
-                        "text": "Open Dashboard",
+                        "text": "Review in TeamAlign →",
                         "emoji": True,
                     },
-                    "url": dashboard_url,
+                    "url": decisions_url,
                     "action_id": "open_dashboard_button",
                 },
             },
         ]
 
-        # Character budget enforcement:
-        # If total visible characters exceed 1,000, remove the lowest-priority bullet instead of cutting text.
+        # 5. Character Budgeting: Strictly <= 1,000 visible characters
+        # If over 1,000 visible characters, remove lowest-priority bullet instead of truncating text
         while self.calculate_visible_characters(blocks) > 1000:
             if len(rec_bullets) > 1:
                 rec_bullets.pop()
@@ -595,27 +829,33 @@ class SlackIntegrationService:
                 conflict_bullets.pop()
                 shown_count = len(conflict_bullets)
                 if shown_count < total_conflicts:
-                    stats_line = f"{score}% aligned | {shown_count} of {total_conflicts} conflicts"
+                    count_text = f"{shown_count} of {total_conflicts} conflicts"
                 else:
-                    stats_line = f"{score}% aligned | {total_conflicts} {'conflict' if total_conflicts == 1 else 'conflicts'}"
+                    count_text = f"{total_conflicts} {'potential conflict' if total_conflicts == 1 else 'potential conflicts'}"
+                stats_line = f"{score}% aligned · {count_text}"
                 blocks[1]["text"]["text"] = stats_line
             elif len(rec_bullets) == 1:
                 rec_bullets.pop()
             else:
                 break
 
-            conflicts_section_text = "*Conflicts*\n" + "\n".join(conflict_bullets or ["• No active conflicts detected."])
-            next_steps_section_text = "*Next Steps*\n" + "\n".join(rec_bullets or ["• Proceed with agreed team plans."])
+            conflicts_section_text = "*⚠️ What's not lining up*\n" + "\n".join(
+                conflict_bullets or ["- *Everything aligned:* No active conflicts detected."]
+            )
+            next_steps_section_text = "*💡 Suggested next steps*\n" + "\n".join(
+                rec_bullets or ["- Proceed with agreed team plans."]
+            )
             blocks[2]["text"]["text"] = conflicts_section_text
             blocks[3]["text"]["text"] = next_steps_section_text
 
-        # Fallback text strictly matches the concise message
+        # Fallback markdown text strictly matches the conversational structure and remains <= 1000 chars
         fallback_text = (
-            f"*{header_title}*\n"
+            f"*{header_title}*\n\n"
             f"{stats_line}\n\n"
             f"{conflicts_section_text}\n\n"
             f"{next_steps_section_text}\n\n"
-            f"{disclaimer_text}"
+            f"{disclaimer_text}\n\n"
+            f"{link_line}"
         )
 
         return {

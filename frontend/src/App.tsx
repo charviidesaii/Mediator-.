@@ -212,9 +212,31 @@ function getOneSentenceSummary(text?: string | null, maxChars = 120): string {
   return result ? `${result}.` : `${words[0]}.`;
 }
 
-function getCleanShortTitle(title?: string | null, maxChars = 50): string {
+function isSelfConflict(title?: string | null, members?: string[] | null): boolean {
+  if (members && members.length === 1) return true;
+  if (!title) return false;
+  const match =
+    title.match(/Between\s+([^,]+?)\s+and\s+([^,]+?)$/i) ||
+    title.match(/([^:]+?)\s+vs\.?\s+([^:]+?)$/i);
+  if (match) {
+    const p1 = match[1].trim().toLowerCase();
+    const p2 = match[2].trim().toLowerCase();
+    if (p1 === p2) return true;
+  }
+  return false;
+}
+
+function getCleanShortTitle(title?: string | null, maxChars = 60): string {
   if (!title) return "";
-  const cleaned = title.replace(/[*_`]/g, "").trim();
+  let cleaned = title
+    .replace(/[*_`]/g, "")
+    .replace(/\bQuality Assurance\b/gi, "Testing")
+    .replace(/\bQA\b/g, "Testing")
+    .replace(/Between\s+[^,]+?\s+and\s+[^,]+?$/i, "")
+    .replace(/[^:]+?\s+vs\.?\s+[^:]+?$/i, "")
+    .replace(/Unclear Task Ownership:\s*/i, "")
+    .replace(/Conflicting Target Deadlines:\s*/i, "Target Deadlines: ")
+    .trim();
   if (cleaned.length <= maxChars) return cleaned;
   const words = cleaned.split(" ");
   let result = "";
@@ -238,6 +260,196 @@ function getShortRecommendation(text?: string | null, maxSentences = 2): string 
   if (!/[.!?]$/.test(res)) res += ".";
   return res;
 }
+
+function getIssueTopicKey(conflictTitle: string): string {
+  const lower = conflictTitle.toLowerCase();
+  if (lower.includes("deadline") || lower.includes("schedule") || lower.includes("launch date") || lower.includes("delivery date")) {
+    return "deadline_launch";
+  }
+  if (lower.includes("frontend")) {
+    return "frontend_ownership";
+  }
+  if (lower.includes("backend")) {
+    return "backend_ownership";
+  }
+  if (lower.includes("quality assurance") || lower.includes("testing") || lower.includes("qa")) {
+    if (lower.includes("dependency") || lower.includes("unbudgeted") || lower.includes("buffer")) {
+      return "testing_buffer";
+    }
+    return "testing_ownership";
+  }
+  if (lower.includes("scope") || lower.includes("feature") || lower.includes("demo")) {
+    return "demo_scope";
+  }
+  if (lower.includes("responsibility") || lower.includes("task ownership")) {
+    const match = lower.match(/(?:ownership|responsibility):\s*([^,]+?)(?:\s+between|\s+vs|$)/i);
+    if (match) {
+      return `resp_${match[1].trim().replace(/\s+/g, "_")}`;
+    }
+  }
+  return lower.replace(/[^a-z0-9]/g, "_").slice(0, 30);
+}
+
+function getCleanIssueTitle(topicKey: string, rawTitle?: string): string {
+  switch (topicKey) {
+    case "deadline_launch":
+      return "Project Launch & Milestone Deadlines";
+    case "frontend_ownership":
+      return "Frontend Delivery Ownership";
+    case "backend_ownership":
+      return "Backend Engineering Ownership";
+    case "testing_buffer":
+      return "Testing Dependency & Schedule Buffer";
+    case "testing_ownership":
+      return "Testing & Verification Ownership";
+    case "demo_scope":
+      return "Demo Scope & Feature Prioritization";
+    default: {
+      if (!rawTitle) return "Team Alignment Issue";
+      return getCleanShortTitle(rawTitle, 60);
+    }
+  }
+}
+
+function formatIssueRecommendation(solutionText: string, issueTitle: string, members: string[]): string {
+  if (!solutionText) return "Review and confirm this decision with the team.";
+  let rec = getShortRecommendation(solutionText, 2);
+
+  // If ownership is unclear, suggest confirming an owner rather than inventing one
+  if (rec.toLowerCase().includes("formally designate") || rec.toLowerCase().includes("designate")) {
+    const taskName = issueTitle.toLowerCase().includes("ownership")
+      ? issueTitle.replace(/\s*ownership/i, "").trim()
+      : issueTitle;
+    if (members.length > 1) {
+      return `Confirm which team member owns ${taskName} among ${members.slice(0, 3).join(", ")} during the next sync to establish clear accountability.`;
+    }
+    return `Confirm ownership for ${taskName} with the team to establish clear accountability.`;
+  }
+
+  // Remove technical jargon like "QA"
+  rec = rec.replace(/\bQA\b/g, "testing").replace(/\bQuality Assurance\b/g, "testing");
+  return rec;
+}
+
+interface DistinctIssue {
+  issueId: string;
+  topicKey: string;
+  title: string;
+  primaryResolutionId: string;
+  primarySolution: string;
+  recommendation: string;
+  severity: ConflictSeverity;
+  impactedMembers: string[];
+  reasoning: string;
+  evidence: Array<{ member: string; quote: string }>;
+  alternatives: ResolutionOption[];
+  questions: string[];
+  groupedProposals: ProposedResolution[];
+  confirmedDecision?: ConfirmedDecision;
+  isResolved: boolean;
+}
+
+function groupProposalsIntoIssues(
+  proposals: ProposedResolution[],
+  decisions: ConfirmedDecision[],
+  responses: MemberResponse[] = [],
+  alignmentScore?: number
+): DistinctIssue[] {
+  const decisionMap = new Map(decisions.map((d) => [d.resolution_id, d]));
+
+  // 1. Filter out self-conflicts
+  const cleanProposals = proposals.filter(
+    (p) => !isSelfConflict(p.conflict_title, p.impacted_members)
+  );
+
+  // 2. Bucket proposals by topic domain
+  const groups: Record<string, ProposedResolution[]> = {};
+  for (const p of cleanProposals) {
+    const topicKey = getIssueTopicKey(p.conflict_title || "");
+    if (!groups[topicKey]) {
+      groups[topicKey] = [];
+    }
+    groups[topicKey].push(p);
+  }
+
+  // 3. Transform each group into a DistinctIssue
+  const issues: DistinctIssue[] = [];
+  const groupEntries = Object.entries(groups);
+
+  for (const [topicKey, groupProps] of groupEntries) {
+    const primary = groupProps[0];
+    const primaryResolutionId = primary.resolution_id;
+
+    // Collect all impacted members across grouped proposals
+    const memberSet = new Set<string>();
+    for (const gp of groupProps) {
+      for (const m of gp.impacted_members || []) {
+        if (m && m.trim()) memberSet.add(m.trim());
+      }
+    }
+    const impactedMembers = Array.from(memberSet);
+
+    // Calculate maximum severity in group
+    let maxSeverity: ConflictSeverity = "LOW";
+    for (let i = 0; i < groupProps.length; i++) {
+      const sev = getConflictSeverity(groupProps[i], alignmentScore, i);
+      if (severityRank[sev] < severityRank[maxSeverity]) {
+        maxSeverity = sev;
+      }
+    }
+
+    const title = getCleanIssueTitle(topicKey, primary.conflict_title);
+    const recommendation = formatIssueRecommendation(primary.recommended_solution, title, impactedMembers);
+
+    // Match evidence quotes from member check-in responses
+    const evidenceList: Array<{ member: string; quote: string }> = [];
+    for (const member of impactedMembers) {
+      const memberResp = responses.find((r) => r.member_name.toLowerCase() === member.toLowerCase());
+      if (memberResp) {
+        evidenceList.push({
+          member: memberResp.member_name,
+          quote: memberResp.raw_text,
+        });
+      }
+    }
+
+    const altMap = new Map<string, ResolutionOption>();
+    const questionsSet = new Set<string>();
+    for (const gp of groupProps) {
+      for (const opt of gp.alternative_options || []) {
+        if (!altMap.has(opt.option_id || opt.title)) {
+          altMap.set(opt.option_id || opt.title, opt);
+        }
+      }
+      for (const q of gp.unresolved_questions_for_team || []) {
+        questionsSet.add(q);
+      }
+    }
+
+    const confirmed = groupProps.map((gp) => decisionMap.get(gp.resolution_id)).find(Boolean);
+
+    issues.push({
+      issueId: `issue-${topicKey}`,
+      topicKey,
+      title,
+      primaryResolutionId,
+      primarySolution: primary.recommended_solution,
+      recommendation,
+      severity: maxSeverity,
+      impactedMembers,
+      reasoning: primary.reasoning,
+      evidence: evidenceList,
+      alternatives: Array.from(altMap.values()),
+      questions: Array.from(questionsSet),
+      groupedProposals: groupProps,
+      confirmedDecision: confirmed,
+      isResolved: !!confirmed,
+    });
+  }
+
+  return issues.sort((a, b) => severityRank[a.severity] - severityRank[b.severity]);
+}
+
 
 const severityRank: Record<ConflictSeverity, number> = {
   HIGH: 0,
@@ -798,7 +1010,7 @@ function Overview({
   const unresolvedConflicts = useMemo(() => {
     if (!report?.proposed_resolutions) return [];
     return report.proposed_resolutions
-      .filter((r) => !decidedResolutionIds.has(r.resolution_id))
+      .filter((r) => !decidedResolutionIds.has(r.resolution_id) && !isSelfConflict(r.conflict_title, r.impacted_members))
       .sort((a, b) => {
         const sevA = getConflictSeverity(a, report?.alignment_score);
         const sevB = getConflictSeverity(b, report?.alignment_score);
@@ -1477,8 +1689,11 @@ function Alignment({
     }
 
     if (report) {
-      // Derive conflicts from saved synthesis report
-      const derivedConflicts: DetectedConflict[] = (report.proposed_resolutions || []).map((res, idx) => {
+      // Derive conflicts from saved synthesis report (excluding self-conflicts)
+      const cleanProposals = (report.proposed_resolutions || []).filter(
+        (res) => !isSelfConflict(res.conflict_title, res.impacted_members)
+      );
+      const derivedConflicts: DetectedConflict[] = cleanProposals.map((res, idx) => {
         const evidence: EvidenceItem[] = [];
         const lowerTitle = (res.conflict_title || "").toLowerCase();
         const keywords = lowerTitle
@@ -1989,26 +2204,40 @@ function Decisions({
   project,
   report,
   decisions,
+  responses = [],
   onRecordDecision,
   recording,
   activeUser,
+  setActiveUser,
+  setPage,
 }: {
   project: Project | null;
   report: SynthesisReport | null;
   decisions: ConfirmedDecision[];
+  responses?: MemberResponse[];
   onRecordDecision: (resolutionId: string, action: "APPROVE" | "REJECT" | "MODIFY", customText?: string) => Promise<void>;
   recording: boolean;
   activeUser: string;
+  setActiveUser: (user: string) => void;
+  setPage: (p: Page) => void;
 }) {
+  const [activeTab, setActiveTab] = useState<"pending" | "approved">("pending");
   const [modifyingResolutionId, setModifyingResolutionId] = useState<string | null>(null);
   const [customText, setCustomText] = useState("");
   const [error, setError] = useState<string | null>(null);
-  const [expandedReasoning, setExpandedReasoning] = useState<Record<string, boolean>>({});
+  const [expandedIssues, setExpandedIssues] = useState<Record<string, boolean>>({});
 
   if (!project) return <div className="page"><p>Please select a project first.</p></div>;
 
   const proposals = report?.proposed_resolutions || [];
-  const decisionMap = new Map(decisions.map((d) => [d.resolution_id, d]));
+
+  // Group proposals into distinct issues, filtering out self-conflicts
+  const distinctIssues = useMemo(() => {
+    return groupProposalsIntoIssues(proposals, decisions, responses, report?.alignment_score);
+  }, [proposals, decisions, responses, report?.alignment_score]);
+
+  const pendingIssues = useMemo(() => distinctIssues.filter((iss) => !iss.isResolved), [distinctIssues]);
+  const approvedDecisions = decisions;
 
   const handleAction = async (resolutionId: string, action: "APPROVE" | "REJECT" | "MODIFY", custom?: string) => {
     setError(null);
@@ -2026,7 +2255,7 @@ function Decisions({
       <PageIntro
         eyebrow={`${project.title} · Decision Studio`}
         title="Turn tension into shared commitments."
-        text="AI-generated resolution proposals require human confirmation. Only explicitly approved or modified actions become binding commitments."
+        text="AI-generated proposals require human confirmation. Only explicitly approved or modified actions become binding team commitments."
       />
 
       {error && (
@@ -2034,6 +2263,42 @@ function Decisions({
           {error}
         </div>
       )}
+
+      {/* Approver identity bar */}
+      <div className="approver-identity-card">
+        <div className="approver-identity-left">
+          <Avatar name={activeUser} size="sm" />
+          <div>
+            <span className="approver-badge">Verified Reviewer</span>
+            <strong className="approver-name">{activeUser}</strong>
+          </div>
+        </div>
+        <div className="approver-identity-right">
+          <label htmlFor="approver-select" className="approver-label">
+            Sign-off as:
+          </label>
+          <select
+            id="approver-select"
+            className="approver-dropdown"
+            value={activeUser}
+            onChange={(e) => setActiveUser(e.target.value)}
+          >
+            {project.members && project.members.length > 0 && (
+              <optgroup label="Project Teammates">
+                {project.members.map((m) => (
+                  <option key={m.id || m.name} value={m.name}>
+                    {m.name} {m.role ? `(${m.role})` : ""}
+                  </option>
+                ))}
+              </optgroup>
+            )}
+            <optgroup label="Verified Personas">
+              <option value="Demo Reviewer (Project Lead)">Demo Reviewer (Project Lead)</option>
+              <option value="Verified Team Lead">Verified Team Lead</option>
+            </optgroup>
+          </select>
+        </div>
+      </div>
 
       <div className="agent-strip">
         <div>
@@ -2043,182 +2308,329 @@ function Decisions({
           <p>
             <strong>Resolution & Synthesis Agent</strong>
             <small>
-              {report
-                ? `${proposals.length} resolution proposal(s) generated with governance status="PROPOSED"`
-                : "Run multi-agent analysis to generate compromise solutions."}
+              {distinctIssues.length > 0
+                ? `${distinctIssues.length} distinct issue(s) identified (${pendingIssues.length} pending sign-off, ${approvedDecisions.length} confirmed commitments)`
+                : "Run multi-agent analysis to generate actionable compromise proposals."}
             </small>
           </p>
         </div>
         <span className="status-dot">
-          {proposals.length > 0 ? "Ready for human sign-off" : "Awaiting analysis"}
+          {pendingIssues.length > 0 ? "Ready for human sign-off" : "All caught up"}
         </span>
       </div>
 
-      {proposals.length === 0 ? (
-        <div className="page-empty">
-          <span>
-            <Icon name="spark" size={24} />
-          </span>
-          <h2>No resolution proposals yet</h2>
-          <p>Run the alignment analysis on teammate check-ins to generate actionable compromise proposals.</p>
-        </div>
-      ) : (
-        <div className="proposal-list">
-          {proposals.map((p, i) => {
-            const confirmed = decisionMap.get(p.resolution_id);
-            const isModifying = modifyingResolutionId === p.resolution_id;
-            const isExpanded = !!expandedReasoning[p.resolution_id];
+      {/* Segmented view tabs */}
+      <div className="decisions-tab-switcher">
+        <button
+          type="button"
+          className={`decisions-tab-btn ${activeTab === "pending" ? "active" : ""}`}
+          onClick={() => setActiveTab("pending")}
+        >
+          <Icon name="spark" size={15} />
+          <span>Pending Proposals</span>
+          <b className="decisions-tab-count">{pendingIssues.length}</b>
+        </button>
+        <button
+          type="button"
+          className={`decisions-tab-btn ${activeTab === "approved" ? "active" : ""}`}
+          onClick={() => setActiveTab("approved")}
+        >
+          <Icon name="check" size={15} />
+          <span>Approved Commitments</span>
+          <b className="decisions-tab-count">{approvedDecisions.length}</b>
+        </button>
+      </div>
 
-            return (
-              <article className="proposal-card" key={p.resolution_id} id={`proposal-${p.resolution_id}`}>
-                <div className="proposal-rank">0{i + 1}</div>
-                <div className="proposal-main">
-                  <div className="proposal-title">
-                    <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
-                      <SeverityBadge severity={getConflictSeverity(p, report?.alignment_score, i)} compact />
-                      <span className="eyebrow" style={{ margin: 0 }}>
-                        {p.resolution_id} · Addressing {getCleanShortTitle(p.conflict_title, 48)}
-                      </span>
+      {/* PENDING TAB */}
+      {activeTab === "pending" && (
+        <>
+          {distinctIssues.length === 0 ? (
+            <div className="page-empty">
+              <span>
+                <Icon name="spark" size={24} />
+              </span>
+              <h2>No resolution proposals yet</h2>
+              <p>Run the alignment analysis on teammate check-ins to generate actionable compromise proposals.</p>
+            </div>
+          ) : pendingIssues.length === 0 ? (
+            <div className="page-empty">
+              <span>
+                <Icon name="check" size={24} />
+              </span>
+              <h2>All proposals confirmed!</h2>
+              <p>
+                Your team has successfully reviewed and agreed on all detected tensions ({approvedDecisions.length} confirmed commitment{approvedDecisions.length === 1 ? "" : "s"}).
+              </p>
+              <div style={{ display: "flex", gap: 10, marginTop: 14 }}>
+                <Button variant="primary" onClick={() => setActiveTab("approved")}>
+                  View Approved Commitments
+                </Button>
+                <Button variant="ghost" onClick={() => setPage("Team Memory")}>
+                  Open Team Memory
+                </Button>
+              </div>
+            </div>
+          ) : (
+            <div className="proposal-list">
+              {pendingIssues.map((issue, i) => {
+                const isModifying = modifyingResolutionId === issue.primaryResolutionId;
+                const isExpanded = !!expandedIssues[issue.issueId];
+
+                return (
+                  <article className="proposal-card" key={issue.issueId} id={`proposal-${issue.primaryResolutionId}`}>
+                    <div className="proposal-rank">0{i + 1}</div>
+                    <div className="proposal-main">
+                      <div className="proposal-title">
+                        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6, flexWrap: "wrap" }}>
+                          <SeverityBadge severity={issue.severity} compact />
+                          <span className="eyebrow" style={{ margin: 0 }}>
+                            {issue.primaryResolutionId} · Distinct Issue #{i + 1}
+                          </span>
+                          {issue.groupedProposals.length > 1 && (
+                            <span className="consolidated-badge">
+                              {issue.groupedProposals.length} related proposals consolidated
+                            </span>
+                          )}
+                        </div>
+                        <h3 className="issue-card-title">{issue.title}</h3>
+
+                        {issue.impactedMembers.length > 0 && (
+                          <div className="affected-teammates">
+                            <span className="affected-label">Affected Teammates:</span>
+                            <div className="affected-pills">
+                              {issue.impactedMembers.map((name) => (
+                                <span key={name} className="affected-member-pill" title={name}>
+                                  <Avatar name={name} size="xs" />
+                                  <span>{name}</span>
+                                </span>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Concise 1-2 sentence recommendation callout */}
+                      <div className="recommendation-callout">
+                        <span className="recommendation-tag">
+                          <Icon name="spark" size={13} />
+                          Recommended Next Step
+                        </span>
+                        <p className="recommendation-text">{issue.recommendation}</p>
+                      </div>
+
+                      {/* Expandable toggle for reasoning, evidence, alternatives */}
+                      <button
+                        type="button"
+                        className="details-toggle-btn"
+                        onClick={() =>
+                          setExpandedIssues((prev) => ({
+                            ...prev,
+                            [issue.issueId]: !prev[issue.issueId],
+                          }))
+                        }
+                      >
+                        <Icon name="spark" size={14} />
+                        {isExpanded ? "Hide reasoning & alternatives" : "View reasoning, evidence & alternatives"}
+                      </button>
+
+                      {isExpanded && (
+                        <div style={{ marginTop: 8 }}>
+                          <div className="reasoning">
+                            <span>
+                              <Icon name="spark" size={16} /> Why this works
+                            </span>
+                            <p>{issue.reasoning}</p>
+                          </div>
+
+                          {/* Evidence from teammate check-ins */}
+                          {issue.evidence.length > 0 && (
+                            <div className="evidence-list">
+                              <strong style={{ fontSize: 11, color: "var(--deep-lilac)", textTransform: "uppercase", letterSpacing: "0.8px" }}>
+                                Teammate Perspectives & Evidence:
+                              </strong>
+                              {issue.evidence.map((ev, idx) => (
+                                <div key={idx} className="evidence-quote-item">
+                                  <blockquote>&ldquo;{ev.quote}&rdquo;</blockquote>
+                                  <cite>&mdash; {ev.member}</cite>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+
+                          {/* Alternatives */}
+                          {issue.alternatives.length > 0 && (
+                            <div className="tradeoffs" style={{ marginTop: 12 }}>
+                              <span style={{ fontWeight: 600, color: "var(--slate)" }}>Alternatives:</span>
+                              {issue.alternatives.map((opt) => (
+                                <span key={opt.option_id} title={opt.description}>
+                                  <i>+</i> {opt.title}
+                                </span>
+                              ))}
+                            </div>
+                          )}
+
+                          {/* Grouped proposals metadata */}
+                          {issue.groupedProposals.length > 1 && (
+                            <div style={{ marginTop: 12, padding: "8px 12px", background: "var(--canvas)", borderRadius: 8, border: "1px solid var(--line)", fontSize: 11, color: "var(--slate)" }}>
+                              <strong>Consolidated Resolution IDs: </strong>
+                              {issue.groupedProposals.map((gp) => gp.resolution_id).join(", ")}
+                            </div>
+                          )}
+
+                          {/* Open Questions for Team */}
+                          {issue.questions.length > 0 && (
+                            <div style={{ marginTop: 14, padding: "10px 14px", background: "var(--soft-paper)", borderRadius: 10, border: "1px solid var(--line)" }}>
+                              <strong style={{ fontSize: 11, color: "var(--deep-lilac)" }}>Consensus Questions:</strong>
+                              <ul style={{ margin: "6px 0 0 16px", fontSize: 11, color: "var(--slate)", lineHeight: 1.5 }}>
+                                {issue.questions.map((q, idx) => (
+                                  <li key={idx}>{q}</li>
+                                ))}
+                              </ul>
+                            </div>
+                          )}
+                        </div>
+                      )}
+
+                      {/* Inline Modify Terms Editor */}
+                      {isModifying && (
+                        <div style={{ marginTop: 16, padding: 14, background: "var(--blush)", borderRadius: 12 }}>
+                          <label style={{ fontSize: 11, fontWeight: 700, display: "block", marginBottom: 6 }}>
+                            Enter Custom Modified Commitment:
+                          </label>
+                          <textarea
+                            style={{ width: "100%", height: 70, padding: 10, borderRadius: 8, border: "1px solid var(--line)", background: "var(--canvas)", fontSize: 12 }}
+                            value={customText}
+                            onChange={(e) => setCustomText(e.target.value)}
+                            placeholder="e.g. Frontend delivery target set to Saturday noon; dedicated verification buffer Saturday 2pm."
+                          />
+                          <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
+                            <Button
+                              variant="primary"
+                              onClick={() => handleAction(issue.primaryResolutionId, "MODIFY", customText)}
+                              disabled={recording || !customText.trim()}
+                            >
+                              Save Modified Decision
+                            </Button>
+                            <Button variant="ghost" onClick={() => setModifyingResolutionId(null)}>
+                              Cancel
+                            </Button>
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Decision Actions */}
+                      <div className="decision-actions">
+                        <Button
+                          onClick={() => handleAction(issue.primaryResolutionId, "APPROVE", issue.recommendation)}
+                          disabled={recording}
+                        >
+                          <Icon name="check" size={17} /> Approve ({activeUser})
+                        </Button>
+                        <Button
+                          variant="outline"
+                          onClick={() => {
+                            setModifyingResolutionId(issue.primaryResolutionId);
+                            setCustomText(issue.recommendation);
+                          }}
+                          disabled={recording}
+                        >
+                          Modify Terms
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          onClick={() => handleAction(issue.primaryResolutionId, "REJECT")}
+                          disabled={recording}
+                        >
+                          Reject
+                        </Button>
+                      </div>
                     </div>
-                    <h2>{getShortRecommendation(p.recommended_solution, 2)}</h2>
-                  </div>
+                    <div className="fit-score">
+                      <strong>RES</strong>
+                      <small>{issue.primaryResolutionId}</small>
+                    </div>
+                  </article>
+                );
+              })}
+            </div>
+          )}
+        </>
+      )}
 
-                  <button
-                    type="button"
-                    className="why-recommendation-toggle"
-                    onClick={() =>
-                      setExpandedReasoning((prev) => ({
-                        ...prev,
-                        [p.resolution_id]: !prev[p.resolution_id],
-                      }))
-                    }
+      {/* APPROVED TAB */}
+      {activeTab === "approved" && (
+        <div className="approved-decisions-list">
+          {approvedDecisions.length === 0 ? (
+            <div className="page-empty">
+              <span>
+                <Icon name="clock" size={24} />
+              </span>
+              <h2>No approved decisions yet</h2>
+              <p>When teammates approve or modify proposals, they will appear here as confirmed commitments and be recorded in Team Memory.</p>
+              <Button variant="soft" onClick={() => setActiveTab("pending")} style={{ marginTop: 12 }}>
+                Review Pending Proposals
+              </Button>
+            </div>
+          ) : (
+            approvedDecisions.map((d) => (
+              <article className="approved-decision-card" key={d.id}>
+                <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 4 }}>
+                  <span
                     style={{
-                      background: "var(--blush)",
-                      border: "1px solid var(--line)",
-                      borderRadius: 8,
-                      padding: "6px 12px",
-                      color: "var(--deep-lilac)",
-                      fontSize: 12,
-                      fontWeight: 600,
-                      cursor: "pointer",
-                      display: "inline-flex",
-                      alignItems: "center",
-                      gap: 6,
-                      margin: "12px 0 8px",
+                      width: 32,
+                      height: 32,
+                      borderRadius: "50%",
+                      background: d.status === "APPROVED" ? "var(--deep-lilac)" : "#d97706",
+                      color: "#fff",
+                      display: "grid",
+                      placeItems: "center",
                     }}
                   >
-                    <Icon name="spark" size={14} />
-                    {isExpanded ? "Hide recommendation details" : "Why this recommendation?"}
-                  </button>
-
-                  {isExpanded && (
-                    <div style={{ marginTop: 8 }}>
-                      <div className="reasoning">
-                        <span>
-                          <Icon name="spark" size={16} /> Why this works
-                        </span>
-                        <p>{p.reasoning}</p>
-                      </div>
-
-                      {p.alternative_options.length > 0 && (
-                        <div className="tradeoffs" style={{ marginTop: 12 }}>
-                          <span style={{ fontWeight: 600, color: "var(--slate)" }}>Alternatives:</span>
-                          {p.alternative_options.map((opt) => (
-                            <span key={opt.option_id} title={opt.description}>
-                              <i>+</i> {opt.title}
-                            </span>
-                          ))}
-                        </div>
-                      )}
-
-                      {p.unresolved_questions_for_team.length > 0 && (
-                        <div style={{ marginTop: 14, padding: "10px 14px", background: "var(--soft-paper)", borderRadius: 10, border: "1px solid var(--line)" }}>
-                          <strong style={{ fontSize: 11, color: "var(--deep-lilac)" }}>Consensus Questions:</strong>
-                          <ul style={{ margin: "6px 0 0 16px", fontSize: 11, color: "var(--slate)", lineHeight: 1.5 }}>
-                            {p.unresolved_questions_for_team.map((q, idx) => (
-                              <li key={idx}>{q}</li>
-                            ))}
-                          </ul>
-                        </div>
-                      )}
-                    </div>
-                  )}
-
-                  {isModifying && (
-                    <div style={{ marginTop: 16, padding: 14, background: "var(--blush)", borderRadius: 12 }}>
-                      <label style={{ fontSize: 11, fontWeight: 700, display: "block", marginBottom: 6 }}>
-                        Enter Custom Modified Commitment:
-                      </label>
-                      <textarea
-                        style={{ width: "100%", height: 70, padding: 10, borderRadius: 8, border: "1px solid var(--line)", background: "var(--canvas)", fontSize: 12 }}
-                        value={customText}
-                        onChange={(e) => setCustomText(e.target.value)}
-                        placeholder="e.g. Frontend complete Saturday noon; dedicated QA Saturday afternoon; soft launch Sunday 10am."
-                      />
-                      <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
-                        <Button
-                          variant="primary"
-                          onClick={() => handleAction(p.resolution_id, "MODIFY", customText)}
-                          disabled={recording || !customText.trim()}
-                        >
-                          Save Modified Decision
-                        </Button>
-                        <Button variant="ghost" onClick={() => setModifyingResolutionId(null)}>
-                          Cancel
-                        </Button>
-                      </div>
-                    </div>
-                  )}
-
-                  {!confirmed ? (
-                    <div className="decision-actions">
-                      <Button
-                        onClick={() => handleAction(p.resolution_id, "APPROVE", p.recommended_solution)}
-                        disabled={recording}
-                      >
-                        <Icon name="check" size={17} /> Approve ({activeUser})
-                      </Button>
-                      <Button
-                        variant="outline"
-                        onClick={() => {
-                          setModifyingResolutionId(p.resolution_id);
-                          setCustomText(p.recommended_solution);
-                        }}
-                        disabled={recording}
-                      >
-                        Modify Terms
-                      </Button>
-                      <Button
-                        variant="ghost"
-                        onClick={() => handleAction(p.resolution_id, "REJECT")}
-                        disabled={recording}
-                      >
-                        Reject
-                      </Button>
-                    </div>
-                  ) : (
-                    <div className="action-result">
-                      <span>
-                        <Icon name="check" size={17} />
-                      </span>
-                      <p>
-                        <strong>
-                          {confirmed.status}: {confirmed.decision_text}
-                        </strong>
-                        <small>
-                          Signed off by {confirmed.decided_by} at {new Date(confirmed.decided_at).toLocaleString()}
-                        </small>
-                      </p>
-                    </div>
-                  )}
+                    <Icon name={d.status === "APPROVED" ? "check" : "target"} size={16} />
+                  </span>
+                  <small style={{ fontSize: 9, fontWeight: 700, color: "var(--slate)" }}>
+                    {d.resolution_id}
+                  </small>
                 </div>
-                <div className="fit-score">
-                  <strong>RES</strong>
-                  <small>{p.resolution_id}</small>
+                <div>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4, flexWrap: "wrap" }}>
+                    <span
+                      style={{
+                        padding: "2px 8px",
+                        borderRadius: 6,
+                        fontSize: 10,
+                        fontWeight: 700,
+                        background: d.status === "APPROVED" ? "var(--blush)" : "#fef3c7",
+                        color: d.status === "APPROVED" ? "var(--deep-lilac)" : "#b45309",
+                      }}
+                    >
+                      {d.status} COMMITMENT
+                    </span>
+                    <span className="eyebrow" style={{ margin: 0 }}>
+                      Confirmed {new Date(d.decided_at).toLocaleDateString()}
+                    </span>
+                  </div>
+                  <h3 style={{ margin: "4px 0 6px", fontSize: 16, fontWeight: 600, color: "var(--ink)" }}>
+                    {getCleanShortTitle(d.decision_text, 60)}
+                  </h3>
+                  <p style={{ margin: 0, fontSize: 13, color: "var(--slate)", lineHeight: 1.5 }}>
+                    {d.decision_text}
+                  </p>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 10, fontSize: 11, color: "var(--slate)" }}>
+                    <Avatar name={d.decided_by} size="xs" />
+                    <span>
+                      Decided by <strong>{d.decided_by}</strong> on {new Date(d.decided_at).toLocaleString()}
+                    </span>
+                  </div>
+                </div>
+                <div>
+                  <Button variant="ghost" onClick={() => setPage("Team Memory")}>
+                    Team Memory <Icon name="arrow" size={12} />
+                  </Button>
                 </div>
               </article>
-            );
-          })}
+            ))
+          )}
         </div>
       )}
     </div>
@@ -2382,7 +2794,7 @@ export default function App() {
   const [report, setReport] = useState<SynthesisReport | null>(null);
   const [analysisResult, setAnalysisResult] = useState<AlignmentWorkflowResult | null>(null);
   const [decisions, setDecisions] = useState<ConfirmedDecision[]>([]);
-  const [activeUser] = useState<string>("Alex Morgan");
+  const [activeUser, setActiveUser] = useState<string>("Demo Reviewer (Project Lead)");
 
   // Loading & status states
   const [analyzing, setAnalyzing] = useState(false);
@@ -2397,6 +2809,19 @@ export default function App() {
   const currentProject = useMemo(() => {
     return projects.find((p) => p.id === currentProjectId) || projects[0] || null;
   }, [projects, currentProjectId]);
+
+  // Sync activeUser with current project members
+  useEffect(() => {
+    if (currentProject?.members && currentProject.members.length > 0) {
+      const memberNames = currentProject.members.map((m) => m.name);
+      if (
+        !memberNames.includes(activeUser) &&
+        (activeUser === "Alex Morgan" || activeUser.startsWith("Demo Reviewer"))
+      ) {
+        setActiveUser(currentProject.members[0].name);
+      }
+    }
+  }, [currentProject?.id]);
 
   const handleSelectProject = (id: string) => {
     setCurrentProjectId(id);
@@ -2729,9 +3154,12 @@ export default function App() {
               project={currentProject}
               report={report}
               decisions={decisions}
+              responses={responses}
               onRecordDecision={handleRecordDecision}
               recording={recording}
               activeUser={activeUser}
+              setActiveUser={setActiveUser}
+              setPage={navigate}
             />
           )}
           {page === "Team Memory" && (

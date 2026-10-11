@@ -134,18 +134,21 @@ async def test_slack_formatting_includes_evidence_and_dashboard_link():
         # Ensure Header exists
         assert any(b.get("type") == "header" for b in blocks)
 
-        # Ensure Dashboard link and button exist
+        # Ensure Decisions link and button exist
         has_dashboard_button = any(
             b.get("accessory", {}).get("action_id") == "open_dashboard_button"
             for b in blocks
         )
-        assert has_dashboard_button, "Slack report must include an Open Dashboard button"
+        assert has_dashboard_button, "Slack report must include Review in TeamAlign button"
+        button_block = next(b for b in blocks if b.get("accessory", {}).get("action_id") == "open_dashboard_button")
+        assert "tab=Decisions" in button_block["accessory"]["url"], "Button must link directly to Decisions tab"
+        assert button_block["accessory"]["text"]["text"] in ["Review in TeamAlign →", "Review & approve in TeamAlign"]
 
         # Ensure disclaimer text exists
         has_disclaimer = any(
-            "team approval required" in str(b) for b in blocks
+            "Team approval required" in str(b) or "team makes the final call" in str(b) for b in blocks
         )
-        assert has_disclaimer, "Slack report must emphasize AI suggestions require team approval"
+        assert has_disclaimer, "Slack report must include governance disclaimer"
 
         # Ensure visible characters remain under 1,000
         visible_chars = service.calculate_visible_characters(blocks)
@@ -334,7 +337,7 @@ def test_slack_formatting_various_conflict_counts_and_severity_sorting():
     )
     out_0 = slack_service.format_slack_analysis(res_0, project_id="proj-0")
     assert slack_service.calculate_visible_characters(out_0["blocks"]) <= 1000
-    assert "0 conflicts" in out_0["text"]
+    assert "0 potential conflicts" in out_0["text"]
     assert "No active conflicts detected" in out_0["text"]
 
     # 2. Test 1 conflict
@@ -372,8 +375,8 @@ def test_slack_formatting_various_conflict_counts_and_severity_sorting():
     )
     out_1 = slack_service.format_slack_analysis(res_1, project_id="proj-1")
     assert slack_service.calculate_visible_characters(out_1["blocks"]) <= 1000
-    assert "1 conflict" in out_1["text"]
-    assert "• Launch: Team expects different dates (Thu–Sun)." in out_1["text"]
+    assert "1 potential conflict" in out_1["text"]
+    assert "*Launch:* Team expects different dates (Thu–Sun)." in out_1["text"]
 
     # 3. Test 4 conflicts
     c_list_4 = [
@@ -412,7 +415,7 @@ def test_slack_formatting_various_conflict_counts_and_severity_sorting():
     )
     out_4 = slack_service.format_slack_analysis(res_4, project_id="proj-4")
     assert slack_service.calculate_visible_characters(out_4["blocks"]) <= 1000
-    assert "4 conflicts" in out_4["text"]
+    assert "4 potential conflicts" in out_4["text"]
     assert "55% aligned" in out_4["text"]
 
     # 4. Test 10+ conflicts and sorting by HIGH severity
@@ -451,7 +454,7 @@ def test_slack_formatting_various_conflict_counts_and_severity_sorting():
     out_12 = slack_service.format_slack_analysis(res_12, project_id="proj-12")
     # Verify exactly 4 bullets displayed under Conflicts
     conflicts_block = out_12["blocks"][2]["text"]["text"]
-    assert conflicts_block.count("•") == 4
+    assert conflicts_block.count("- ") == 4
     # Verify visible characters strictly <= 1000
     assert slack_service.calculate_visible_characters(out_12["blocks"]) <= 1000
     assert len(out_12["text"]) <= 1000
@@ -539,12 +542,13 @@ def test_slack_formatting_extremely_long_gemini_responses():
     for b in output["blocks"]:
         t = b.get("text", {}).get("text", "")
         for line in t.split("\n"):
-            if line.startswith("•"):
+            if line.startswith("- "):
                 assert line.endswith("."), f"Bullet should end cleanly with period: {line}"
                 assert "..." not in line, f"Bullet should not be cut off with ellipsis: {line}"
 
-    # Ensure dashboard URL points to the correct project
+    # Ensure dashboard URL points to the correct project and Decisions tab
     assert "project_id=proj-long-123" in str(output["blocks"])
+    assert "tab=Decisions" in str(output["blocks"])
 
 
 def test_slack_formatting_hidden_conflicts_shows_count():
@@ -682,23 +686,296 @@ def test_slack_formatting_preserves_initials_and_complete_sentences_from_sqlite(
     # 3. Exactly up to 4 conflict bullets and up to 3 next step bullets
     conflicts_block = output["blocks"][2]["text"]["text"]
     next_steps_block = output["blocks"][3]["text"]["text"]
-    assert conflicts_block.count("•") == 4
-    assert next_steps_block.count("•") <= 3
+    assert conflicts_block.count("- ") == 4
+    assert next_steps_block.count("- ") <= 3
 
     # 4. Each bullet is a complete sentence ending with a period
     for block_text in [conflicts_block, next_steps_block]:
         for line in block_text.split("\n"):
-            if line.startswith("•"):
+            if line.startswith("- "):
                 assert line.endswith("."), f"Bullet must end with a period: {line}"
                 # Must not be cut off mid-thought like 'The frontend and.' or 'David T.'
-                assert line != "• David T.", "Initials must not be treated as a complete standalone bullet"
+                assert line != "- David T.", "Initials must not be treated as a complete standalone bullet"
                 assert not line.endswith(" and."), f"Bullet must not end with dangling conjunction: {line}"
                 assert not line.endswith(" the."), f"Bullet must not end with dangling article: {line}"
                 assert not line.endswith(" on."), f"Bullet must not end with dangling preposition: {line}"
 
-    # 5. Governance disclaimer and Dashboard CTA preserved
-    assert "_AI suggestions — team approval required._" in output["text"]
+    # 5. Governance disclaimer and Decisions tab link preserved
+    assert ("Team approval required" in output["text"] or "team makes the final call" in output["text"])
     assert f"project_id={pid}" in str(output["blocks"])
+    assert "tab=Decisions" in str(output["blocks"])
+
+
+@pytest.mark.asyncio
+async def test_slack_message_deduplication_and_edits():
+    """Validates that repeated Slack scans deduplicate messages and preserve edits."""
+    import tempfile
+    from app.services.supabase import StorageService
+    from app.slack.service import SlackIntegrationService
+
+    with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as tmp:
+        db_path = tmp.name
+
+    try:
+        storage = StorageService(backend="sqlite")
+        storage.db_path = db_path
+        await storage.initialize()
+
+        # Create project and channel mapping
+        project = await storage.get_or_create_project_for_channel(
+            channel_id="C_DEDUP_TEST", channel_name="dedup-sprint"
+        )
+        service = SlackIntegrationService()
+
+        # Batch 1: Initial messages from Slack
+        messages_1 = [
+            ("Alex", "The target release date is Thursday.", "100.1"),
+            ("Sam", "I need 2 days of testing before launch.", "100.2"),
+        ]
+        added_1 = await service.ingest_messages_into_project(
+            project_id=project.id,
+            messages=messages_1,
+            channel_id="C_DEDUP_TEST",
+            storage=storage,
+        )
+        assert added_1 == 2
+        responses_1 = await storage.get_responses(project.id)
+        assert len(responses_1) == 2
+
+        # Batch 2: Exact repeat scan (e.g. repeated @mediator command)
+        added_2 = await service.ingest_messages_into_project(
+            project_id=project.id,
+            messages=messages_1,
+            channel_id="C_DEDUP_TEST",
+            storage=storage,
+        )
+        assert added_2 == 0, "Repeated identical messages must be deduplicated"
+        responses_2 = await storage.get_responses(project.id)
+        assert len(responses_2) == 2, "Database response count must not increase"
+
+        # Batch 3: User edited message in Slack (same ts, updated text)
+        messages_edited = [
+            ("Alex", "The target release date is Friday after testing.", "100.1"),
+            ("Sam", "I need 2 days of testing before launch.", "100.2"),
+        ]
+        added_3 = await service.ingest_messages_into_project(
+            project_id=project.id,
+            messages=messages_edited,
+            channel_id="C_DEDUP_TEST",
+            storage=storage,
+        )
+        assert added_3 == 0, "Edited message should not add a new row"
+        responses_3 = await storage.get_responses(project.id)
+        assert len(responses_3) == 2
+        alex_resp = next(r for r in responses_3 if r.member_name == "Alex")
+        assert alex_resp.raw_text == "The target release date is Friday after testing."
+
+        # Batch 4: Genuinely new message from third teammate
+        messages_new = [
+            ("Taylor", "I will deploy the backend services.", "100.3"),
+        ]
+        added_4 = await service.ingest_messages_into_project(
+            project_id=project.id,
+            messages=messages_new,
+            channel_id="C_DEDUP_TEST",
+            storage=storage,
+        )
+        assert added_4 == 1
+        responses_4 = await storage.get_responses(project.id)
+        assert len(responses_4) == 3
+
+    finally:
+        if os.path.exists(db_path):
+            os.remove(db_path)
+
+
+@pytest.mark.asyncio
+async def test_conflict_resolution_tracking_and_status_transitions():
+    """Validates conflict status transitions: PROPOSED -> APPROVED and REOPENED when contradicted."""
+    import tempfile
+    from datetime import datetime, timezone, timedelta
+    from app.models.schemas import (
+        DecisionActionRequest,
+        ProposedResolution,
+        SynthesisReport,
+    )
+    from app.services.supabase import StorageService
+
+    with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as tmp:
+        db_path = tmp.name
+
+    try:
+        storage = StorageService(backend="sqlite")
+        storage.db_path = db_path
+        await storage.initialize()
+
+        project = await storage.create_project(
+            ProjectCreate(title="Conflict Tracking Test", description="Test status transitions")
+        )
+
+        # Ingest baseline messages
+        await storage.add_response(project.id, "Alice", "Launch deadline is Thursday.")
+        await storage.add_response(project.id, "Bob", "Launch deadline is Sunday.")
+
+        # Save synthesis report with 2 proposed resolutions
+        report = SynthesisReport(
+            report_id="rep-track-1",
+            executive_summary="Schedule clash.",
+            alignment_score=40.0,
+            key_findings=["Clash on dates."],
+            proposed_resolutions=[
+                ProposedResolution(
+                    resolution_id="RES-01",
+                    conflict_id="CONF-01",
+                    conflict_title="Launch Schedule Clash",
+                    recommended_solution="Launch Friday with core features.",
+                    reasoning="Fair compromise.",
+                    impacted_members=["Alice", "Bob"],
+                    unresolved_questions_for_team=[],
+                ),
+                ProposedResolution(
+                    resolution_id="RES-02",
+                    conflict_id="CONF-02",
+                    conflict_title="Deployment Responsibility",
+                    recommended_solution="Alice owns deployment.",
+                    reasoning="Alice has access.",
+                    impacted_members=["Alice", "Bob"],
+                    unresolved_questions_for_team=[],
+                ),
+            ],
+            human_action_items=["Confirm launch date."],
+        )
+        await storage.save_report(project.id, report)
+
+        # Check initial statuses: both should be PROPOSED
+        statuses_initial = await storage.get_conflict_statuses(project.id)
+        assert statuses_initial["CONF-01"]["status"] == "PROPOSED"
+        assert statuses_initial["CONF-02"]["status"] == "PROPOSED"
+
+        # Record human approval for RES-01
+        action = DecisionActionRequest(
+            resolution_id="RES-01",
+            action="APPROVE",
+            decided_by="Project Lead",
+            notes="Agreed in standup",
+        )
+        confirmed = await storage.record_decision(project.id, action)
+        assert confirmed.conflict_id == "CONF-01", "Decision must record linked conflict_id"
+
+        # Check statuses: CONF-01 is APPROVED, CONF-02 is PROPOSED
+        statuses_after_approval = await storage.get_conflict_statuses(project.id)
+        assert statuses_after_approval["CONF-01"]["status"] == "APPROVED"
+        assert statuses_after_approval["CONF-02"]["status"] == "PROPOSED"
+
+        # Reopen test: submit a NEW message AFTER approval that contradicts the agreed launch schedule
+        new_resp = await storage.add_response(
+            project.id,
+            member_name="Alice",
+            raw_text="I cannot do the agreed Friday launch schedule due to an urgent dependency.",
+        )
+        # Ensure timestamp is strictly after decision
+        await storage.update_response_text(new_resp.id, new_resp.raw_text)
+
+        statuses_reopened = await storage.get_conflict_statuses(project.id)
+        assert statuses_reopened["CONF-01"]["status"] == "REOPENED", "Conflict must reopen when new evidence contradicts approved decision"
+        assert statuses_reopened["CONF-02"]["status"] == "PROPOSED"
+
+    finally:
+        if os.path.exists(db_path):
+            os.remove(db_path)
+
+
+def test_recommendation_accuracy_and_jargon_removal():
+    """Validates that recommendations match conflict IDs and remove technical jargon."""
+    from app.models.schemas import (
+        AlignmentWorkflowResult,
+        ConflictCategory,
+        ConflictDetectionOutput,
+        ConflictSeverity,
+        ConflictType,
+        DetectedConflict,
+        PerspectiveAnalysisOutput,
+        ProposedResolution,
+        SynthesisReport,
+    )
+    from app.slack.service import slack_service
+
+    conflicts = [
+        DetectedConflict(
+            conflict_id="CONF-ALPHA",
+            title="Project scope: Team disagrees on personalized recommendations.",
+            conflict_type=ConflictType.GOAL_INCOMPATIBILITY,
+            category=ConflictCategory.DIRECT_DISAGREEMENT,
+            severity=ConflictSeverity.HIGH,
+            severity_reasoning="Scope divergence.",
+            parties_involved=["Alice", "Bob"],
+            evidence=[],
+            impact_description="Team disagrees on personalized recommendations in MVP.",
+        ),
+        DetectedConflict(
+            conflict_id="CONF-BETA",
+            title="Responsibilities: No confirmed QA gate owner.",
+            conflict_type=ConflictType.RESPONSIBILITY_OVERLAP_OR_GAP,
+            category=ConflictCategory.UNRESOLVED_DEPENDENCY,
+            severity=ConflictSeverity.HIGH,
+            severity_reasoning="Ownership gap.",
+            parties_involved=["Alice", "Bob"],
+            evidence=[],
+            impact_description="QA gate ownership is unclear.",
+        ),
+    ]
+
+    resolutions = [
+        ProposedResolution(
+            resolution_id="RES-ALPHA",
+            conflict_id="CONF-ALPHA",
+            conflict_title="Project scope",
+            recommended_solution="Adopt a coordinated schedule and remove personalized recommendations from the demo.",
+            reasoning="Saves time.",
+            impacted_members=["Alice", "Bob"],
+            unresolved_questions_for_team=[],
+        ),
+        ProposedResolution(
+            resolution_id="RES-BETA",
+            conflict_id="CONF-BETA",
+            conflict_title="Responsibilities",
+            recommended_solution="Formally designate Alice as primary owner for testing buffer validation.",
+            reasoning="Alice has expertise.",
+            impacted_members=["Alice"],
+            unresolved_questions_for_team=[],
+        ),
+    ]
+
+    result = AlignmentWorkflowResult(
+        workflow_id="wf-jargon",
+        project_id="proj-jargon",
+        perspectives_output=PerspectiveAnalysisOutput(
+            perspectives=[], total_members_analyzed=2, overall_summary="Testing jargon"
+        ),
+        conflicts_output=ConflictDetectionOutput(conflicts=conflicts, synthesis_summary="Jargon test"),
+        synthesis_output=SynthesisReport(
+            report_id="rep-jargon",
+            executive_summary="Jargon test.",
+            alignment_score=50.0,
+            key_findings=[],
+            proposed_resolutions=resolutions,
+            human_action_items=[],
+        ),
+        execution_mode="MOCK_DETERMINISTIC",
+    )
+
+    out = slack_service.format_slack_analysis(result, project_id="proj-jargon")
+    text = out["text"]
+
+    # Verify jargon removal
+    assert "QA gate" not in text, "Technical jargon 'QA gate' must be replaced"
+    assert "dependency inversion" not in text
+
+    # Verify conversational tone
+    assert "*Project scope:*" in text
+    assert "*Responsibilities:*" in text
+    assert "Consider adopting a coordinated schedule" in text
+    assert "Clarify whether to designate Alice" in text
 
 
 

@@ -316,6 +316,7 @@ class ConfirmedDecision(BaseModel):
     id: str = Field(..., description="Unique decision ID")
     project_id: str = Field(..., description="Project ID")
     resolution_id: str = Field(..., description="Resolution ID that this decision was based on")
+    conflict_id: Optional[str] = Field(default=None, description="Linked conflict ID")
     status: DecisionStatus = Field(..., description="Final status (APPROVED, REJECTED, MODIFIED)")
     decision_text: str = Field(..., description="Official binding team commitment text")
     decided_by: str = Field(..., description="Team member who recorded the decision")
