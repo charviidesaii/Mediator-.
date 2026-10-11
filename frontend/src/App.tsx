@@ -3,7 +3,12 @@ import { apiClient, ApiError } from "./api/client";
 import type {
   AlignmentWorkflowResult,
   ConfirmedDecision,
+  ConflictCategory,
+  ConflictSeverity,
+  ConflictType,
   DetectedConflict,
+  EvidenceItem,
+  ExtractedPerspective,
   MemberResponse,
   Project,
   ProposedResolution,
@@ -1179,6 +1184,8 @@ function CheckIn({
 function Alignment({
   project,
   analysisResult,
+  report,
+  responses,
   onRunAnalysis,
   analyzing,
   error,
@@ -1187,6 +1194,8 @@ function Alignment({
 }: {
   project: Project | null;
   analysisResult: AlignmentWorkflowResult | null;
+  report: SynthesisReport | null;
+  responses: MemberResponse[];
   onRunAnalysis: () => Promise<void>;
   analyzing: boolean;
   error: string | null;
@@ -1200,10 +1209,113 @@ function Alignment({
 
   if (!project) return <div className="page"><p>Please select a project first.</p></div>;
 
-  const conflicts = analysisResult?.conflicts_output?.conflicts || [];
-  const compatibleDifferences = analysisResult?.conflicts_output?.compatible_differences || [];
-  const perspectives = analysisResult?.perspectives_output?.perspectives || [];
-  const hasAnalysis = analysisResult !== null;
+  const { conflicts, compatibleDifferences, perspectives, hasAnalysis, score, executionMode } = useMemo(() => {
+    if (analysisResult) {
+      return {
+        conflicts: analysisResult.conflicts_output?.conflicts || [],
+        compatibleDifferences: analysisResult.conflicts_output?.compatible_differences || [],
+        perspectives: analysisResult.perspectives_output?.perspectives || [],
+        hasAnalysis: true,
+        score: Math.round(analysisResult.synthesis_output?.alignment_score ?? 0),
+        executionMode: analysisResult.execution_mode || "MOCK_DETERMINISTIC",
+      };
+    }
+
+    if (report) {
+      // Derive conflicts from saved synthesis report
+      const derivedConflicts: DetectedConflict[] = (report.proposed_resolutions || []).map((res, idx) => {
+        const evidence: EvidenceItem[] = [];
+        const lowerTitle = (res.conflict_title || "").toLowerCase();
+        const keywords = lowerTitle
+          .replace(/[^a-z0-9 ]/g, " ")
+          .split(/\s+/)
+          .filter((w) => w.length > 3 && !["with", "from", "that", "this", "about", "scope", "issue"].includes(w));
+
+        for (const member of res.impacted_members || []) {
+          const mLower = member.toLowerCase();
+          const memberResps = responses.filter((r) => r.member_name.toLowerCase() === mLower);
+          const keywordMatch = memberResps.find((r) => keywords.some((kw) => r.raw_text.toLowerCase().includes(kw)));
+          const chosen = keywordMatch || memberResps[0];
+          if (chosen) {
+            evidence.push({
+              member_name: chosen.member_name,
+              quote: chosen.raw_text,
+              interpretation: `Statement from ${chosen.member_name} regarding ${res.conflict_title}.`,
+            });
+          }
+        }
+
+        if (evidence.length === 0 && responses.length > 0) {
+          const matchedResp = responses.find((r) => keywords.some((kw) => r.raw_text.toLowerCase().includes(kw))) || responses[0];
+          evidence.push({
+            member_name: matchedResp.member_name,
+            quote: matchedResp.raw_text,
+            interpretation: `Check-in statement from ${matchedResp.member_name}.`,
+          });
+        }
+
+        let cType: ConflictType = "PRIORITY_MISMATCH";
+        if (lowerTitle.includes("deadline") || lowerTitle.includes("date") || lowerTitle.includes("time") || lowerTitle.includes("schedule")) {
+          cType = "DEADLINE_CONTRADICTION";
+        } else if (lowerTitle.includes("responsibility") || lowerTitle.includes("owner") || lowerTitle.includes("assign") || lowerTitle.includes("integration")) {
+          cType = "RESPONSIBILITY_OVERLAP_OR_GAP";
+        } else if (lowerTitle.includes("goal") || lowerTitle.includes("scope") || lowerTitle.includes("vision")) {
+          cType = "GOAL_INCOMPATIBILITY";
+        } else if (lowerTitle.includes("gap") || lowerTitle.includes("missing")) {
+          cType = "INFORMATION_GAP";
+        } else if (lowerTitle.includes("process") || lowerTitle.includes("design") || lowerTitle.includes("mismatch")) {
+          cType = "PROCESS_MISALIGNMENT";
+        }
+
+        return {
+          conflict_id: res.conflict_id || `CONF-${idx + 1}`,
+          title: res.conflict_title,
+          conflict_type: cType,
+          category: "DIRECT_DISAGREEMENT" as ConflictCategory,
+          severity: (idx === 0 || report.alignment_score < 50 ? "HIGH" : "MEDIUM") as ConflictSeverity,
+          severity_reasoning: res.reasoning,
+          parties_involved: res.impacted_members || [],
+          evidence,
+          impact_description: res.recommended_solution,
+        };
+      });
+
+      const memberMap = new Map<string, string[]>();
+      for (const r of responses) {
+        const existing = memberMap.get(r.member_name) || [];
+        existing.push(r.raw_text);
+        memberMap.set(r.member_name, existing);
+      }
+
+      const derivedPerspectives: ExtractedPerspective[] = Array.from(memberMap.entries()).map(([name, quotes]) => ({
+        member_name: name,
+        goals: quotes.slice(0, 1).map((q) => ({ statement: q.slice(0, 80) + (q.length > 80 ? "…" : ""), source_quote: q, clarity: "CLEAR" })),
+        priorities: [],
+        responsibilities: [],
+        deadlines: [],
+        ambiguities_or_missing_details: [],
+        key_quotes: quotes,
+      }));
+
+      return {
+        conflicts: derivedConflicts,
+        compatibleDifferences: report.key_findings || [],
+        perspectives: derivedPerspectives,
+        hasAnalysis: true,
+        score: Math.round(report.alignment_score),
+        executionMode: "SAVED_ANALYSIS",
+      };
+    }
+
+    return {
+      conflicts: [],
+      compatibleDifferences: [],
+      perspectives: [],
+      hasAnalysis: false,
+      score: 0,
+      executionMode: "MOCK_DETERMINISTIC",
+    };
+  }, [analysisResult, report, responses, project?.title]);
 
   const selectedConflict = conflicts.find((c) => c.conflict_id === selectedConflictId) || conflicts[0];
 
@@ -1291,10 +1403,10 @@ function Alignment({
             </button>
             <div className="legend" style={{ marginLeft: "auto", display: "flex", gap: 14 }}>
               <span className="data-source">
-                <Icon name="spark" size={12} /> {analysisResult?.execution_mode || "MOCK_DETERMINISTIC"}
+                <Icon name="spark" size={12} /> {executionMode}
               </span>
               <span style={{ fontSize: 12, fontWeight: 700, color: "var(--deep-lilac)" }}>
-                Score: {Math.round(analysisResult?.synthesis_output?.alignment_score ?? 0)}%
+                Score: {score}%
               </span>
             </div>
           </div>
@@ -1560,18 +1672,24 @@ function Alignment({
 
                       <div className="quotes">
                         <span className="section-label">Verbatim Evidence Citations</span>
-                        {selectedConflict.evidence.map((ev, i) => (
-                          <blockquote key={i}>
-                            <Avatar name={ev.member_name} size="sm" />
-                            <div>
-                              <strong>{ev.member_name}</strong>
-                              <p>&ldquo;{ev.quote}&rdquo;</p>
-                              <small style={{ color: "var(--slate)", fontSize: 9 }}>
-                                {ev.interpretation}
-                              </small>
-                            </div>
-                          </blockquote>
-                        ))}
+                        {selectedConflict.evidence && selectedConflict.evidence.length > 0 ? (
+                          selectedConflict.evidence.map((ev, i) => (
+                            <blockquote key={i}>
+                              <Avatar name={ev.member_name} size="sm" />
+                              <div>
+                                <strong>{ev.member_name}</strong>
+                                <p>&ldquo;{ev.quote}&rdquo;</p>
+                                <small style={{ color: "var(--slate)", fontSize: 9 }}>
+                                  {ev.interpretation}
+                                </small>
+                              </div>
+                            </blockquote>
+                          ))
+                        ) : (
+                          <p style={{ fontSize: 11, color: "var(--slate)", fontStyle: "italic", margin: "6px 0" }}>
+                            No specific quotes cited for this item.
+                          </p>
+                        )}
                       </div>
                     </div>
                   )}
@@ -1956,13 +2074,29 @@ function TeamMemory({
 }
 
 export default function App() {
-  const [page, setPage] = useState<Page>("Overview");
+  const [page, setPage] = useState<Page>(() => {
+    if (typeof window !== "undefined") {
+      const params = new URLSearchParams(window.location.search);
+      const tabParam = params.get("tab");
+      const validPages: Page[] = ["Overview", "Check-In", "Alignment", "Decisions", "Team Memory"];
+      if (tabParam && validPages.includes(tabParam as Page)) {
+        return tabParam as Page;
+      }
+    }
+    return "Overview";
+  });
   const [menuOpen, setMenuOpen] = useState(false);
   const [setupMode, setSetupMode] = useState<"create" | "members" | null>(null);
 
   // Live state from FastAPI backend
   const [projects, setProjects] = useState<Project[]>([]);
-  const [currentProjectId, setCurrentProjectId] = useState<string | null>(null);
+  const [currentProjectId, setCurrentProjectId] = useState<string | null>(() => {
+    if (typeof window !== "undefined") {
+      const params = new URLSearchParams(window.location.search);
+      return params.get("project_id");
+    }
+    return null;
+  });
   const [responses, setResponses] = useState<MemberResponse[]>([]);
   const [report, setReport] = useState<SynthesisReport | null>(null);
   const [analysisResult, setAnalysisResult] = useState<AlignmentWorkflowResult | null>(null);
@@ -1983,6 +2117,15 @@ export default function App() {
     return projects.find((p) => p.id === currentProjectId) || projects[0] || null;
   }, [projects, currentProjectId]);
 
+  const handleSelectProject = (id: string) => {
+    setCurrentProjectId(id);
+    if (typeof window !== "undefined") {
+      const url = new URL(window.location.href);
+      url.searchParams.set("project_id", id);
+      window.history.replaceState(null, "", url.toString());
+    }
+  };
+
   // Load initial projects from backend
   const refreshProjects = async () => {
     try {
@@ -1990,14 +2133,18 @@ export default function App() {
       const list = await apiClient.getProjects();
       setProjects(list);
       setIsLive(true);
-      if (list.length > 0 && !currentProjectId) {
-        // Check URL query parameter for deep-linking (e.g. from Slack bot)
+      if (list.length > 0) {
         const params = new URLSearchParams(window.location.search);
         const qId = params.get("project_id");
         if (qId && list.some((p) => p.id === qId)) {
           setCurrentProjectId(qId);
+        } else if (currentProjectId && list.some((p) => p.id === currentProjectId)) {
+          // Keep current valid selection
         } else {
           setCurrentProjectId(list[0].id);
+          const url = new URL(window.location.href);
+          url.searchParams.set("project_id", list[0].id);
+          window.history.replaceState(null, "", url.toString());
         }
       }
     } catch (err) {
@@ -2009,11 +2156,29 @@ export default function App() {
 
   useEffect(() => {
     refreshProjects();
+
+    const handlePopState = () => {
+      const params = new URLSearchParams(window.location.search);
+      const qId = params.get("project_id");
+      if (qId) {
+        setCurrentProjectId(qId);
+      }
+      const tabParam = params.get("tab");
+      const validPages: Page[] = ["Overview", "Check-In", "Alignment", "Decisions", "Team Memory"];
+      if (tabParam && validPages.includes(tabParam as Page)) {
+        setPage(tabParam as Page);
+      }
+    };
+    window.addEventListener("popstate", handlePopState);
+    return () => window.removeEventListener("popstate", handlePopState);
   }, []);
 
   // When active project changes, load its responses, alignment, and decisions
   useEffect(() => {
     if (!currentProject) return;
+
+    setAnalysisResult(null);
+    setAnalysisError(null);
 
     // Load responses
     apiClient
@@ -2172,6 +2337,11 @@ export default function App() {
   const navigate = (p: Page) => {
     setPage(p);
     setMenuOpen(false);
+    if (typeof window !== "undefined") {
+      const url = new URL(window.location.href);
+      url.searchParams.set("tab", p);
+      window.history.replaceState(null, "", url.toString());
+    }
     window.scrollTo({ top: 0, behavior: "smooth" });
   };
 
@@ -2196,7 +2366,7 @@ export default function App() {
         <Header
           project={currentProject}
           projects={projects}
-          onSelectProject={(id) => setCurrentProjectId(id)}
+          onSelectProject={handleSelectProject}
           onCreateProject={() => setSetupMode("create")}
           onManageTeam={() => setSetupMode("members")}
           menuOpen={menuOpen}
@@ -2264,6 +2434,8 @@ export default function App() {
             <Alignment
               project={currentProject}
               analysisResult={analysisResult}
+              report={report}
+              responses={responses}
               onRunAnalysis={handleRunAnalysis}
               analyzing={analyzing}
               error={analysisError}
