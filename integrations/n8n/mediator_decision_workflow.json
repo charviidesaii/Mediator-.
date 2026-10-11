@@ -1,0 +1,269 @@
+{
+  "name": "Mediator - Post-Decision Automation Workflow",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "mediator-decision",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "node-webhook-trigger",
+      "name": "Webhook Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        200,
+        300
+      ],
+      "webhookId": "mediator-decision"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Validate schema and event_type\nconst body = $input.first().json.body || $input.first().json;\n\nconst requiredFields = ['event_id', 'event_type', 'project_id', 'resolution_id', 'decision_text', 'decided_by', 'timestamp'];\nconst missing = requiredFields.filter(f => !body[f]);\n\nconst isValidType = body.event_type === 'decision.approved' || body.event_type === 'decision.modified';\n\nif (missing.length > 0 || !isValidType) {\n  return [{\n    json: {\n      isValid: false,\n      reason: missing.length > 0 \n        ? `Missing required fields: ${missing.join(', ')}` \n        : `Invalid event_type: ${body.event_type}. Must be decision.approved or decision.modified`,\n      event_id: body.event_id || 'unknown'\n    }\n  }];\n}\n\nreturn [{\n  json: {\n    isValid: true,\n    ...body\n  }\n}];"
+      },
+      "id": "node-validate-event",
+      "name": "Validate Decision Event",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        420,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{ $json.isValid }}",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "id": "node-if-valid",
+      "name": "Is Valid Event?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        640,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ status: 'rejected', reason: $json.reason, event_id: $json.event_id }) }}",
+        "options": {
+          "responseCode": 400
+        }
+      },
+      "id": "node-reject-response",
+      "name": "Reject Invalid Event",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        860,
+        450
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Deduplication cache within workflow state\nconst eventId = $json.event_id;\nconst staticData = $getWorkflowStaticData('global');\nstaticData.processedEvents = staticData.processedEvents || {};\n\nif (staticData.processedEvents[eventId]) {\n  return [{\n    json: {\n      isDuplicate: true,\n      event_id: eventId,\n      message: 'Event already processed; no new announcement sent'\n    }\n  }];\n}\n\nstaticData.processedEvents[eventId] = new Date().toISOString();\n\nreturn [{\n  json: {\n    isDuplicate: false,\n    ...$json\n  }\n}];"
+      },
+      "id": "node-deduplicate",
+      "name": "Deduplicate Event ID",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        860,
+        220
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{ $json.isDuplicate }}",
+              "value2": false
+            }
+          ]
+        }
+      },
+      "id": "node-if-not-duplicate",
+      "name": "Is New Event?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        1080,
+        220
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ status: 'duplicate', event_id: $json.event_id, message: $json.message }) }}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "node-duplicate-response",
+      "name": "Return Duplicate Status",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        1300,
+        380
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Format announcement & sanitize test payload for Beeceptor\nconst item = $json;\n\nconst formattedSlackText = `🎉 *Team Alignment Commitment Confirmed!*\\n\\n` +\n  `• *Project*: \\`${item.project_id}\\`\\n` +\n  `• *Decision*: \"${item.decision_text}\"\\n` +\n  `• *Decided By*: ${item.decided_by}\\n` +\n  `• *Resolution ID*: \\`${item.resolution_id}\\`\\n` +\n  `• *Timestamp*: ${item.timestamp}\\n\\n` +\n  `_This decision was human-approved and is now binding on the project team._`;\n\n// Sanitized audit payload for Beeceptor (no sensitive private credentials)\nconst beeceptorPayload = {\n  audit_source: \"n8n_decision_automation\",\n  event_id: item.event_id,\n  event_type: item.event_type,\n  project_id: item.project_id,\n  resolution_id: item.resolution_id,\n  decision_snippet: item.decision_text.substring(0, 120),\n  decided_by: item.decided_by,\n  timestamp: item.timestamp\n};\n\nreturn [{\n  json: {\n    ...item,\n    formattedSlackText,\n    beeceptorPayload\n  }\n}];"
+      },
+      "id": "node-format-announcement",
+      "name": "Format Decision Payload",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1300,
+        150
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://mediator.free.beeceptor.com/api/webhooks/decision",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.beeceptorPayload) }}",
+        "options": {
+          "timeout": 5000
+        }
+      },
+      "id": "node-audit-beeceptor",
+      "name": "Audit Log to Beeceptor",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1520,
+        150
+      ],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ status: 'processed', event_id: $json.event_id, timestamp: $json.timestamp }) }}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "node-success-response",
+      "name": "Respond Success",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        1740,
+        150
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook Trigger": {
+      "main": [
+        [
+          {
+            "node": "Validate Decision Event",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Decision Event": {
+      "main": [
+        [
+          {
+            "node": "Is Valid Event?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is Valid Event?": {
+      "main": [
+        [
+          {
+            "node": "Deduplicate Event ID",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Reject Invalid Event",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Deduplicate Event ID": {
+      "main": [
+        [
+          {
+            "node": "Is New Event?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is New Event?": {
+      "main": [
+        [
+          {
+            "node": "Format Decision Payload",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Return Duplicate Status",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Decision Payload": {
+      "main": [
+        [
+          {
+            "node": "Audit Log to Beeceptor",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Audit Log to Beeceptor": {
+      "main": [
+        [
+          {
+            "node": "Respond Success",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}

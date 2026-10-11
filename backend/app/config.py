@@ -51,6 +51,12 @@ class Settings(BaseSettings):
     slack_signing_secret: Optional[str] = Field(default=None, alias="SLACK_SIGNING_SECRET")
     dashboard_base_url: str = Field(default="http://localhost:8000", alias="DASHBOARD_BASE_URL")
 
+    # n8n Automation Webhook Configuration (Triggered on human-approved commitments)
+    n8n_webhook_url: Optional[str] = Field(
+        default="https://dtakang.app.n8n.cloud/webhook/mediator-decision",
+        alias="N8N_WEBHOOK_URL",
+    )
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",

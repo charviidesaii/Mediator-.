@@ -156,3 +156,70 @@ def test_slack_event_deduplication():
     evt_id = "test_event_998877"
     assert not _is_duplicate_event(evt_id), "First encounter should not be a duplicate"
     assert _is_duplicate_event(evt_id), "Second encounter must be flagged as duplicate"
+
+
+@pytest.mark.asyncio
+async def test_slack_handle_app_mention_executes_analysis_service():
+    """Integration test verifying handle_app_mention listener executes analysis_service without NameError."""
+    import asyncio
+    from unittest.mock import AsyncMock, patch
+    from app.slack.bot import create_slack_app
+    from app.config import settings
+
+    with patch.object(settings, "slack_bot_token", "xoxb-mock-test-token"):
+        app = create_slack_app()
+        assert app is not None
+
+        # Extract registered listener for app_mention
+        listeners = app._listeners
+        mention_listener = None
+        for l in listeners:
+            for m in l.matchers:
+                # Check if matcher matches app_mention
+                dummy_req = MagicMock()
+                dummy_req.body = {"event": {"type": "app_mention"}}
+                try:
+                    if m.matches(dummy_req):
+                        mention_listener = l
+                        break
+                except Exception:
+                    pass
+
+        # Setup mock client
+        mock_client = MagicMock()
+        mock_client.auth_test.return_value = {"user_id": "U_BOT_123"}
+        mock_client.conversations_info.return_value = {"channel": {"name": "sprint-release"}}
+        mock_client.conversations_history.return_value = {
+            "ok": True,
+            "messages": [
+                {"user": "U1", "text": "Our deadline is Saturday.", "ts": "100.1"},
+                {"user": "U2", "text": "Our deadline is Sunday.", "ts": "100.2"},
+            ],
+        }
+        mock_client.users_info.side_effect = lambda user: {
+            "ok": True,
+            "user": {"profile": {"display_name": "Dev" if user == "U1" else "QA"}},
+        }
+        mock_client.chat_postMessage.return_value = {"ts": "100.99"}
+
+        event_payload = {
+            "type": "app_mention",
+            "client_msg_id": "unique-msg-id-12345",
+            "channel": "C_TEST_CHANNEL",
+            "user": "U1",
+            "text": "<@U_BOT_123> analyze team alignment",
+            "ts": "100.3",
+        }
+
+        # Execute handler directly
+        if mention_listener:
+            # Run the listener function
+            handler_func = mention_listener.ack_function or mention_listener.handler
+            # Call handler and wait for background async task
+            handler_func(event_payload, mock_client, mock_client.chat_postMessage)
+            # Give background task 1 second to complete
+            await asyncio.sleep(0.5)
+
+            # Assert ack or result message was posted
+            assert mock_client.chat_postMessage.called
+

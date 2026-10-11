@@ -11,7 +11,16 @@ import type {
   TeamMemberCreate,
 } from "./models";
 
-const API_BASE_URL = "https://mediator.free.beeceptor.com";
+const rawBaseUrl = import.meta.env.VITE_API_BASE_URL?.trim();
+const rawMode = (import.meta.env.VITE_APP_MODE || import.meta.env.MODE || "").toLowerCase();
+export const isMockMode = rawMode === "mock" || Boolean(rawBaseUrl && rawBaseUrl.includes("beeceptor.com"));
+
+// Configurable HTTPS or localhost base URL:
+// 1. Explicit VITE_API_BASE_URL (supports deployment HTTPS URLs)
+// 2. Fallback based on mode (Beeceptor for mock mode, localhost:8000 for live mode)
+export const API_BASE_URL = rawBaseUrl && rawBaseUrl !== ""
+  ? rawBaseUrl.replace(/\/$/, "")
+  : (isMockMode ? "https://mediator.free.beeceptor.com" : "http://localhost:8000");
 
 export class ApiError extends Error {
   constructor(
@@ -83,6 +92,8 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
 
 export const apiClient = {
   baseUrl: API_BASE_URL,
+  appMode: isMockMode ? ("mock" as const) : ("live" as const),
+  isMock: isMockMode,
   isConfigured: true,
   request,
 

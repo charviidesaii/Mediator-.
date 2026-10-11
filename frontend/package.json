@@ -5,6 +5,8 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "dev:mock": "vite --mode mock",
+    "dev:live": "vite --mode live",
     "build": "vite build",
     "preview": "vite preview",
     "format": "oxfmt"

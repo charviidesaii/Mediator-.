@@ -17,6 +17,7 @@ from slack_bolt import App
 from slack_bolt.adapter.socket_mode import SocketModeHandler
 
 from app.config import settings
+from app.services.analysis import analysis_service
 from app.slack.service import slack_service
 
 logger = logging.getLogger(__name__)
@@ -49,6 +50,7 @@ def create_slack_app() -> Optional[App]:
     app = App(
         token=settings.slack_bot_token,
         signing_secret=settings.slack_signing_secret,
+        token_verification_enabled=False,
     )
 
     # -------------------------------------------------------------

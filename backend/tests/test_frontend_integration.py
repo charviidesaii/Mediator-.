@@ -13,7 +13,7 @@ async def test_dashboard_serves_react_frontend(async_client):
     res = await async_client.get("/dashboard")
     assert res.status_code == 200
     assert "text/html" in res.headers.get("content-type", "")
-    assert "<div id=\"root\"></div>" in res.text or "TeamAlign" in res.text
+    assert "<div id=\"root\"></div>" in res.text or "TeamAlign" in res.text or "Mediator" in res.text
 
 
 @pytest.mark.asyncio

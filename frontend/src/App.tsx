@@ -330,14 +330,40 @@ function Header({
             </div>
             <div className="mode-row">
               <span>
-                <i /> {isLive ? "Live FastAPI Connected" : "Connecting..."}
+                <i style={{ background: isLive ? (apiClient.isMock ? "#eab308" : "#10b981") : "#ef4444" }} />{" "}
+                {isLive ? (apiClient.isMock ? "Mock API Connected" : "Live FastAPI Connected") : "API Offline"}
               </span>
-              <small>{executionMode}</small>
+              <small>{apiClient.isMock ? "Beeceptor Mock" : executionMode}</small>
             </div>
           </div>
         )}
       </div>
       <div className="topbar-actions">
+        <span
+          className="mode-indicator"
+          style={{
+            fontSize: "11px",
+            fontWeight: 600,
+            padding: "3px 8px",
+            borderRadius: "6px",
+            background: apiClient.isMock ? "rgba(234, 179, 8, 0.15)" : "rgba(16, 185, 129, 0.15)",
+            color: apiClient.isMock ? "#facc15" : "#34d399",
+            border: apiClient.isMock ? "1px solid rgba(234, 179, 8, 0.3)" : "1px solid rgba(16, 185, 129, 0.3)",
+            display: "inline-flex",
+            alignItems: "center",
+            gap: "5px",
+          }}
+        >
+          <span
+            style={{
+              width: 7,
+              height: 7,
+              borderRadius: "50%",
+              background: isLive ? (apiClient.isMock ? "#eab308" : "#10b981") : "#ef4444",
+            }}
+          />
+          {apiClient.isMock ? "MOCK MODE (Beeceptor)" : "LIVE MODE (FastAPI)"}
+        </span>
         <span className="data-source" title={`Mode: ${executionMode}`}>
           <Icon name="spark" size={13} /> {executionMode}
         </span>
@@ -1762,6 +1788,7 @@ export default function App() {
   const [isSeeding, setIsSeeding] = useState(false);
   const [executionMode, setExecutionMode] = useState<string>("MOCK_DETERMINISTIC");
   const [analysisError, setAnalysisError] = useState<string | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [isLive, setIsLive] = useState(true);
 
   // Active project
@@ -1772,6 +1799,7 @@ export default function App() {
   // Load initial projects from backend
   const refreshProjects = async () => {
     try {
+      setLoadError(null);
       const list = await apiClient.getProjects();
       setProjects(list);
       setIsLive(true);
@@ -1788,6 +1816,7 @@ export default function App() {
     } catch (err) {
       console.error("Failed to load projects from backend:", err);
       setIsLive(false);
+      setLoadError(err instanceof Error ? err.message : "Unable to reach API backend.");
     }
   };
 
@@ -1988,6 +2017,40 @@ export default function App() {
           executionMode={executionMode}
           isLive={isLive}
         />
+        {loadError && (
+          <div
+            style={{
+              margin: "12px 24px 0",
+              padding: "10px 16px",
+              background: "rgba(239, 68, 68, 0.12)",
+              border: "1px solid rgba(239, 68, 68, 0.3)",
+              borderRadius: "8px",
+              color: "#f87171",
+              fontSize: "13px",
+              display: "flex",
+              justifyContent: "space-between",
+              alignItems: "center",
+            }}
+          >
+            <span>
+              ⚠️ <strong>Backend Connection Error:</strong> {loadError}
+            </span>
+            <button
+              onClick={refreshProjects}
+              style={{
+                background: "rgba(239, 68, 68, 0.25)",
+                border: "1px solid rgba(239, 68, 68, 0.4)",
+                color: "#fff",
+                padding: "4px 10px",
+                borderRadius: "4px",
+                fontSize: "12px",
+                cursor: "pointer",
+              }}
+            >
+              Retry
+            </button>
+          </div>
+        )}
         <main>
           {page === "Overview" && (
             <Overview
