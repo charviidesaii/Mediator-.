@@ -11,11 +11,7 @@ import type {
   TeamMemberCreate,
 } from "./models";
 
-const rawBaseUrl = import.meta.env.VITE_API_BASE_URL?.trim();
-// Default to empty string (which uses the Vite dev server proxy to /api) or localhost:8000
-const API_BASE_URL = rawBaseUrl !== undefined && rawBaseUrl !== ""
-  ? rawBaseUrl.replace(/\/$/, "")
-  : "http://localhost:8000";
+const API_BASE_URL = "https://mediator.free.beeceptor.com";
 
 export class ApiError extends Error {
   constructor(
@@ -70,6 +66,16 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
       }
     }
     throw new ApiError(message, response.status, payload);
+  }
+
+  if (!contentType?.includes("application/json")) {
+    throw new ApiError(
+      typeof payload === "string" && payload.includes("nothing is configured")
+        ? `Beeceptor route not configured: ${normalizedPath}`
+        : `Expected JSON response from ${url} but received plain text.`,
+      response.status,
+      payload,
+    );
   }
 
   return payload as T;
