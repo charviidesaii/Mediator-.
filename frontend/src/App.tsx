@@ -173,6 +173,67 @@ function Button({
   );
 }
 
+/**
+ * Progressive disclosure helpers for concise display across dashboard tabs
+ */
+function getOneSentenceSummary(text?: string | null, maxChars = 120): string {
+  if (!text) return "";
+  const cleaned = text.replace(/[*_`>#]/g, "").replace(/\s+/g, " ").trim();
+  const match = cleaned.match(/^(.*?)([.!?](?:\s|$)|$)/);
+  const firstSentence = (match ? match[1] : cleaned).trim().replace(/[.,:;!?-]+$/, "");
+  if (!firstSentence) return "";
+  const full = `${firstSentence}.`;
+  if (full.length <= maxChars) return full;
+
+  for (const delim of ["; ", " — ", " - ", ", but ", ", while ", ", which ", ", "]) {
+    if (firstSentence.includes(delim)) {
+      const clause = firstSentence.split(delim)[0].trim().replace(/[.,:;!?-]+$/, "");
+      const candidate = `${clause}.`;
+      if (candidate.length >= 15 && candidate.length <= maxChars) {
+        return candidate;
+      }
+    }
+  }
+
+  const words = firstSentence.split(" ");
+  let result = "";
+  for (const w of words) {
+    if ((result ? result + " " + w : w).length + 1 <= maxChars) {
+      result = result ? `${result} ${w}` : w;
+    } else {
+      break;
+    }
+  }
+  return result ? `${result}.` : `${words[0]}.`;
+}
+
+function getCleanShortTitle(title?: string | null, maxChars = 50): string {
+  if (!title) return "";
+  const cleaned = title.replace(/[*_`]/g, "").trim();
+  if (cleaned.length <= maxChars) return cleaned;
+  const words = cleaned.split(" ");
+  let result = "";
+  for (const w of words) {
+    if ((result ? result + " " + w : w).length + 1 <= maxChars) {
+      result = result ? `${result} ${w}` : w;
+    } else {
+      break;
+    }
+  }
+  return result ? result : cleaned.slice(0, maxChars);
+}
+
+function getShortRecommendation(text?: string | null, maxSentences = 2): string {
+  if (!text) return "";
+  const cleaned = text.replace(/[*_`>#]/g, "").replace(/\s+/g, " ").trim();
+  const sentences = cleaned.split(/(?<=[.!?])\s+/).filter(Boolean);
+  if (sentences.length === 0) return cleaned;
+  const slice = sentences.slice(0, maxSentences);
+  let res = slice.join(" ").trim();
+  if (!/[.!?]$/.test(res)) res += ".";
+  return res;
+}
+
 const navItems: { name: Page; icon: IconName }[] = [
   { name: "Overview", icon: "grid" },
   { name: "Check-In", icon: "check" },
@@ -713,7 +774,7 @@ function Overview({
               <strong>{hasActivity ? "Multi-Agent Analysis Ready" : "Awaiting check-ins"}</strong>
               <p>
                 {hasActivity
-                  ? report.executive_summary
+                  ? getOneSentenceSummary(report.executive_summary, 120)
                   : "Submit check-ins from at least two teammates, then click Run Analysis."}
               </p>
               <button onClick={() => setPage(hasActivity ? "Alignment" : "Check-In")}>
@@ -790,23 +851,34 @@ function Overview({
         <div className="bottom-grid">
           <section className="card">
             <div className="card-heading">
-              <span>Top Conflict</span>
+              <span>Issues Needing Attention</span>
               <button onClick={() => setPage("Alignment")}>View all</button>
             </div>
-            {report.proposed_resolutions?.[0] ? (
-              <div className="attention-card">
-                <span className="attention-line" />
-                <div>
-                  <small>Requires consensus</small>
-                  <strong>{report.proposed_resolutions[0].conflict_title}</strong>
-                  <div className="statement-faces">
-                    {report.proposed_resolutions[0].impacted_members.map((name) => (
-                      <Avatar key={name} name={name} size="sm" />
-                    ))}
-                    <span>{report.proposed_resolutions[0].recommended_solution}</span>
+            {report.proposed_resolutions && report.proposed_resolutions.length > 0 ? (
+              <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                {report.proposed_resolutions.slice(0, 3).map((res, idx) => (
+                  <div
+                    className="attention-card"
+                    key={res.resolution_id || idx}
+                    onClick={() => setPage("Alignment")}
+                    style={{ cursor: "pointer" }}
+                  >
+                    <span className="attention-line" />
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <small>Requires consensus · Issue #{idx + 1}</small>
+                      <strong>{getCleanShortTitle(res.conflict_title, 50)}</strong>
+                      <div className="statement-faces" style={{ marginTop: 4 }}>
+                        {res.impacted_members.map((name) => (
+                          <Avatar key={name} name={name} size="sm" />
+                        ))}
+                        <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                          {getOneSentenceSummary(res.recommended_solution, 110)}
+                        </span>
+                      </div>
+                    </div>
+                    <Icon name="chevron" />
                   </div>
-                </div>
-                <Icon name="chevron" />
+                ))}
               </div>
             ) : (
               <p style={{ fontSize: 12, color: "var(--slate)" }}>No active conflicts found.</p>
@@ -1124,6 +1196,7 @@ function Alignment({
   const [viewMode, setViewMode] = useState<"conflicts" | "perspectives">("conflicts");
   const [filter, setFilter] = useState<"All" | "Agreements" | "Conflicts">("All");
   const [selectedConflictId, setSelectedConflictId] = useState<string | null>(null);
+  const [showDetails, setShowDetails] = useState(false);
 
   if (!project) return <div className="page"><p>Please select a project first.</p></div>;
 
@@ -1402,8 +1475,8 @@ function Alignment({
                         <span className="finding-label conflict">
                           {c.conflict_type.replace(/_/g, " ")} · {c.severity} SEVERITY
                         </span>
-                        <strong>{c.title}</strong>
-                        <small>{c.severity_reasoning}</small>
+                        <strong>{getCleanShortTitle(c.title, 50)}</strong>
+                        <small>{getOneSentenceSummary(c.impact_description || c.severity_reasoning || c.title, 140)}</small>
                       </span>
                       <span className="comparison-people">
                         {c.parties_involved.map((p) => (
@@ -1423,7 +1496,7 @@ function Alignment({
                     <span className="comparison-copy">
                       <span className="finding-label agreement">Shared Alignment</span>
                       <strong>Compatible Perspectives</strong>
-                      <small>{diffText}</small>
+                      <small>{getOneSentenceSummary(diffText, 140)}</small>
                     </span>
                   </div>
                 ))}
@@ -1434,7 +1507,10 @@ function Alignment({
                   <span className="insight-type">
                     {selectedConflict.severity} SEVERITY CONFLICT
                   </span>
-                  <h2>{selectedConflict.title}</h2>
+                  <h2>{getCleanShortTitle(selectedConflict.title, 50)}</h2>
+                  <p style={{ fontSize: 13, color: "var(--ink)", margin: "8px 0", lineHeight: 1.5 }}>
+                    {getOneSentenceSummary(selectedConflict.impact_description || selectedConflict.severity_reasoning, 140)}
+                  </p>
                   <div className="confidence">
                     <span>
                       <i
@@ -1446,32 +1522,59 @@ function Alignment({
                     <small>{selectedConflict.category.replace(/_/g, " ")}</small>
                   </div>
 
-                  <div className="ai-summary">
-                    <span>
-                      <Icon name="spark" size={16} /> Conflict Agent Finding
-                    </span>
-                    <p>{selectedConflict.severity_reasoning}</p>
-                  </div>
+                  <button
+                    className="view-details-toggle"
+                    type="button"
+                    onClick={() => setShowDetails(!showDetails)}
+                    style={{
+                      background: "var(--blush)",
+                      border: "1px solid var(--line)",
+                      borderRadius: 8,
+                      padding: "6px 12px",
+                      color: "var(--deep-lilac)",
+                      cursor: "pointer",
+                      fontWeight: 600,
+                      fontSize: 12,
+                      display: "inline-flex",
+                      alignItems: "center",
+                      gap: 6,
+                      margin: "12px 0",
+                    }}
+                  >
+                    <Icon name="spark" size={14} />
+                    {showDetails ? "Hide details" : "View details"}
+                  </button>
 
-                  <div style={{ margin: "14px 0", fontSize: 11, color: "var(--slate)" }}>
-                    <strong>Impact:</strong> {selectedConflict.impact_description}
-                  </div>
+                  {showDetails && (
+                    <div>
+                      <div className="ai-summary">
+                        <span>
+                          <Icon name="spark" size={16} /> Conflict Agent Finding
+                        </span>
+                        <p>{selectedConflict.severity_reasoning}</p>
+                      </div>
 
-                  <div className="quotes">
-                    <span className="section-label">Verbatim Evidence Citations</span>
-                    {selectedConflict.evidence.map((ev, i) => (
-                      <blockquote key={i}>
-                        <Avatar name={ev.member_name} size="sm" />
-                        <div>
-                          <strong>{ev.member_name}</strong>
-                          <p>&ldquo;{ev.quote}&rdquo;</p>
-                          <small style={{ color: "var(--slate)", fontSize: 9 }}>
-                            {ev.interpretation}
-                          </small>
-                        </div>
-                      </blockquote>
-                    ))}
-                  </div>
+                      <div style={{ margin: "14px 0", fontSize: 11, color: "var(--slate)" }}>
+                        <strong>Impact:</strong> {selectedConflict.impact_description}
+                      </div>
+
+                      <div className="quotes">
+                        <span className="section-label">Verbatim Evidence Citations</span>
+                        {selectedConflict.evidence.map((ev, i) => (
+                          <blockquote key={i}>
+                            <Avatar name={ev.member_name} size="sm" />
+                            <div>
+                              <strong>{ev.member_name}</strong>
+                              <p>&ldquo;{ev.quote}&rdquo;</p>
+                              <small style={{ color: "var(--slate)", fontSize: 9 }}>
+                                {ev.interpretation}
+                              </small>
+                            </div>
+                          </blockquote>
+                        ))}
+                      </div>
+                    </div>
+                  )}
 
                   <Button icon="arrow" onClick={() => setPage("Decisions")}>
                     Explore Resolution Options
@@ -1504,6 +1607,7 @@ function Decisions({
   const [modifyingResolutionId, setModifyingResolutionId] = useState<string | null>(null);
   const [customText, setCustomText] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [expandedReasoning, setExpandedReasoning] = useState<Record<string, boolean>>({});
 
   if (!project) return <div className="page"><p>Please select a project first.</p></div>;
 
@@ -1567,6 +1671,7 @@ function Decisions({
           {proposals.map((p, i) => {
             const confirmed = decisionMap.get(p.resolution_id);
             const isModifying = modifyingResolutionId === p.resolution_id;
+            const isExpanded = !!expandedReasoning[p.resolution_id];
 
             return (
               <article className="proposal-card" key={p.resolution_id}>
@@ -1574,37 +1679,69 @@ function Decisions({
                 <div className="proposal-main">
                   <div className="proposal-title">
                     <span className="eyebrow">
-                      {p.resolution_id} · Addressing {p.conflict_title}
+                      {p.resolution_id} · Addressing {getCleanShortTitle(p.conflict_title, 50)}
                     </span>
-                    <h2>{p.recommended_solution}</h2>
+                    <h2>{getShortRecommendation(p.recommended_solution, 2)}</h2>
                   </div>
 
-                  <div className="reasoning">
-                    <span>
-                      <Icon name="spark" size={16} /> Why this works
-                    </span>
-                    <p>{p.reasoning}</p>
-                  </div>
+                  <button
+                    type="button"
+                    className="why-recommendation-toggle"
+                    onClick={() =>
+                      setExpandedReasoning((prev) => ({
+                        ...prev,
+                        [p.resolution_id]: !prev[p.resolution_id],
+                      }))
+                    }
+                    style={{
+                      background: "var(--blush)",
+                      border: "1px solid var(--line)",
+                      borderRadius: 8,
+                      padding: "6px 12px",
+                      color: "var(--deep-lilac)",
+                      fontSize: 12,
+                      fontWeight: 600,
+                      cursor: "pointer",
+                      display: "inline-flex",
+                      alignItems: "center",
+                      gap: 6,
+                      margin: "12px 0 8px",
+                    }}
+                  >
+                    <Icon name="spark" size={14} />
+                    {isExpanded ? "Hide recommendation details" : "Why this recommendation?"}
+                  </button>
 
-                  {p.alternative_options.length > 0 && (
-                    <div className="tradeoffs" style={{ marginTop: 12 }}>
-                      <span style={{ fontWeight: 600, color: "var(--slate)" }}>Alternatives:</span>
-                      {p.alternative_options.map((opt) => (
-                        <span key={opt.option_id} title={opt.description}>
-                          <i>+</i> {opt.title}
+                  {isExpanded && (
+                    <div style={{ marginTop: 8 }}>
+                      <div className="reasoning">
+                        <span>
+                          <Icon name="spark" size={16} /> Why this works
                         </span>
-                      ))}
-                    </div>
-                  )}
+                        <p>{p.reasoning}</p>
+                      </div>
 
-                  {p.unresolved_questions_for_team.length > 0 && (
-                    <div style={{ marginTop: 14, padding: "10px 14px", background: "var(--soft-paper)", borderRadius: 10, border: "1px solid var(--line)" }}>
-                      <strong style={{ fontSize: 11, color: "var(--deep-lilac)" }}>Consensus Questions:</strong>
-                      <ul style={{ margin: "6px 0 0 16px", fontSize: 11, color: "var(--slate)", lineHeight: 1.5 }}>
-                        {p.unresolved_questions_for_team.map((q, idx) => (
-                          <li key={idx}>{q}</li>
-                        ))}
-                      </ul>
+                      {p.alternative_options.length > 0 && (
+                        <div className="tradeoffs" style={{ marginTop: 12 }}>
+                          <span style={{ fontWeight: 600, color: "var(--slate)" }}>Alternatives:</span>
+                          {p.alternative_options.map((opt) => (
+                            <span key={opt.option_id} title={opt.description}>
+                              <i>+</i> {opt.title}
+                            </span>
+                          ))}
+                        </div>
+                      )}
+
+                      {p.unresolved_questions_for_team.length > 0 && (
+                        <div style={{ marginTop: 14, padding: "10px 14px", background: "var(--soft-paper)", borderRadius: 10, border: "1px solid var(--line)" }}>
+                          <strong style={{ fontSize: 11, color: "var(--deep-lilac)" }}>Consensus Questions:</strong>
+                          <ul style={{ margin: "6px 0 0 16px", fontSize: 11, color: "var(--slate)", lineHeight: 1.5 }}>
+                            {p.unresolved_questions_for_team.map((q, idx) => (
+                              <li key={idx}>{q}</li>
+                            ))}
+                          </ul>
+                        </div>
+                      )}
                     </div>
                   )}
 
@@ -1697,6 +1834,7 @@ function TeamMemory({
   decisions: ConfirmedDecision[];
 }) {
   const [query, setQuery] = useState("");
+  const [expandedHistory, setExpandedHistory] = useState<Record<string, boolean>>({});
 
   if (!project) return <div className="page"><p>Please select a project first.</p></div>;
 
@@ -1740,28 +1878,77 @@ function TeamMemory({
         </div>
       ) : (
         <div className="timeline">
-          {filtered.map((d, i) => (
-            <article className="timeline-event" key={d.id}>
-              <div className="timeline-marker">
-                <span>{new Date(d.decided_at).toLocaleDateString()}</span>
-                <i>
-                  <Icon name={d.status === "APPROVED" ? "check" : "target"} size={16} />
-                </i>
-              </div>
-              <div className="memory-card">
-                <span className="memory-type">{d.status} COMMITMENT</span>
-                <h2>{d.decision_text}</h2>
-                <p>
-                  Official binding decision recorded by <strong>{d.decided_by}</strong> based on resolution {d.resolution_id}.
-                </p>
-                <div className="memory-meta">
-                  <Avatar name={d.decided_by} size="sm" />
-                  <span>Decided on {new Date(d.decided_at).toLocaleTimeString()}</span>
+          {filtered.map((d, i) => {
+            const isExpanded = !!expandedHistory[d.id];
+            return (
+              <article className="timeline-event" key={d.id}>
+                <div className="timeline-marker">
+                  <span>{new Date(d.decided_at).toLocaleDateString()}</span>
+                  <i>
+                    <Icon name={d.status === "APPROVED" ? "check" : "target"} size={16} />
+                  </i>
                 </div>
-              </div>
-              {i < filtered.length - 1 && <span className="timeline-line" />}
-            </article>
-          ))}
+                <div className="memory-card">
+                  <span className="memory-type">{d.status} COMMITMENT</span>
+                  <h2>{getCleanShortTitle(d.decision_text, 60)}</h2>
+                  <p>{getOneSentenceSummary(d.decision_text, 120)}</p>
+
+                  <button
+                    type="button"
+                    className="view-details-toggle"
+                    onClick={() =>
+                      setExpandedHistory((prev) => ({
+                        ...prev,
+                        [d.id]: !prev[d.id],
+                      }))
+                    }
+                    style={{
+                      background: "var(--blush)",
+                      border: "1px solid var(--line)",
+                      borderRadius: 8,
+                      padding: "5px 10px",
+                      color: "var(--deep-lilac)",
+                      fontSize: 11,
+                      fontWeight: 600,
+                      cursor: "pointer",
+                      display: "inline-flex",
+                      alignItems: "center",
+                      gap: 5,
+                      margin: "8px 0 10px",
+                    }}
+                  >
+                    <Icon name="clock" size={13} />
+                    {isExpanded ? "Hide history & details" : "View history & details"}
+                  </button>
+
+                  {isExpanded && (
+                    <div style={{ marginTop: 8, marginBottom: 12, padding: "10px 14px", background: "var(--canvas)", borderRadius: 10, border: "1px solid var(--line)" }}>
+                      <strong style={{ fontSize: 11, color: "var(--ink)", display: "block", marginBottom: 4 }}>
+                        Full Binding Commitment:
+                      </strong>
+                      <p style={{ fontSize: 12, color: "var(--ink)", lineHeight: 1.5, margin: "0 0 8px" }}>
+                        {d.decision_text}
+                      </p>
+                      <div style={{ fontSize: 10, color: "var(--slate)", display: "flex", flexWrap: "wrap", gap: 12 }}>
+                        <span>Resolution ID: <b>{d.resolution_id}</b></span>
+                        <span>Decision ID: <b>{d.id}</b></span>
+                        <span>Status: <b>{d.status}</b></span>
+                        <span>Timestamp: <b>{new Date(d.decided_at).toLocaleString()}</b></span>
+                      </div>
+                    </div>
+                  )}
+
+                  <div className="memory-meta">
+                    <Avatar name={d.decided_by} size="sm" />
+                    <span>
+                      Decided by <strong>{d.decided_by}</strong> on {new Date(d.decided_at).toLocaleDateString()}
+                    </span>
+                  </div>
+                </div>
+                {i < filtered.length - 1 && <span className="timeline-line" />}
+              </article>
+            );
+          })}
         </div>
       )}
     </div>

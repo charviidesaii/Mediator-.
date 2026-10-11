@@ -24,8 +24,8 @@ def test_google_adk_workflow_graph_structure():
 
 
 @pytest.mark.skipif(
-    not settings.active_api_key,
-    reason="BLOCKED: GEMINI_API_KEY / GOOGLE_API_KEY not configured in environment. Real Gemini execution skipped.",
+    not settings.is_live_gemini_available,
+    reason="BLOCKED: GEMINI_API_KEY not configured or mock mode enabled. Real Gemini execution skipped.",
 )
 @pytest.mark.asyncio
 async def test_live_gemini_adk_execution():
