@@ -139,10 +139,10 @@ async def test_slack_formatting_includes_evidence_and_dashboard_link():
             b.get("accessory", {}).get("action_id") == "open_dashboard_button"
             for b in blocks
         )
-        assert has_dashboard_button, "Slack report must include Review in TeamAlign button"
+        assert has_dashboard_button, "Slack report must include Review in Mediator button"
         button_block = next(b for b in blocks if b.get("accessory", {}).get("action_id") == "open_dashboard_button")
         assert "tab=Decisions" in button_block["accessory"]["url"], "Button must link directly to Decisions tab"
-        assert button_block["accessory"]["text"]["text"] in ["Review in TeamAlign →", "Review & approve in TeamAlign"]
+        assert button_block["accessory"]["text"]["text"] in ["Review in Mediator →", "Review in TeamAlign →", "Review & approve in TeamAlign"]
 
         # Ensure disclaimer text exists
         has_disclaimer = any(

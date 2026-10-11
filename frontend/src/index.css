@@ -121,7 +121,7 @@ main { padding: clamp(32px, 4vw, 56px) clamp(24px, 4vw, 58px) 70px; }
   .timeline-event { grid-template-columns: 54px 1fr; gap: 14px; }.timeline-marker i { right: -25px; }.timeline-line { left: 64px; }.memory-meta > span { display: none; }.memory-tools { flex-wrap: wrap; }
 }
 
-/* Refined TeamAlign visual system */
+/* Refined Mediator visual system */
 .sidebar { background: var(--nav); color: var(--canvas); }
 .brand { color: var(--canvas); font-weight: 700; }
 .nav-item { color: color-mix(in srgb, var(--canvas) 70%, transparent); font-weight: 500; }

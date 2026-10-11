@@ -525,13 +525,13 @@ function Sidebar({
 }) {
   return (
     <aside className="sidebar">
-      <button className="brand" onClick={() => setPage("Overview")} aria-label="TeamAlign home">
+      <button className="brand" onClick={() => setPage("Overview")} aria-label="Mediator home">
         <span className="brand-mark">
           <span />
           <span />
           <span />
         </span>
-        <span>TeamAlign</span>
+        <span>Mediator</span>
       </button>
       <nav className="nav-list">
         {navItems.map((item) => (

@@ -663,7 +663,7 @@ class StorageService:
         # Create new project
         c_label = f"#{channel_name}" if channel_name else channel_id
         project_in = ProjectCreate(
-            title=f"Slack Channel {c_label}",
+            title=f"Mediator {c_label}",
             description=f"Auto-created workspace for Slack channel {channel_id}",
         )
         project = await self.create_project(project_in)

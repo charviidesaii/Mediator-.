@@ -757,7 +757,7 @@ class SlackIntegrationService:
 
         # 4. Section Headings, Disclaimer, and CTA Link
         disclaimer_text = "AI suggestions only · Team approval required"
-        link_line = f"<{decisions_url}|Review in TeamAlign →>"
+        link_line = f"<{decisions_url}|Review in Mediator →>"
 
         conflicts_section_text = "*⚠️ What's not lining up*\n" + "\n".join(conflict_bullets)
         next_steps_section_text = "*💡 Suggested next steps*\n" + "\n".join(rec_bullets)
@@ -811,7 +811,7 @@ class SlackIntegrationService:
                     "type": "button",
                     "text": {
                         "type": "plain_text",
-                        "text": "Review in TeamAlign →",
+                        "text": "Review in Mediator →",
                         "emoji": True,
                     },
                     "url": decisions_url,
