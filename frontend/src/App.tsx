@@ -239,6 +239,55 @@ function getShortRecommendation(text?: string | null, maxSentences = 2): string 
   return res;
 }
 
+const severityRank: Record<ConflictSeverity, number> = {
+  HIGH: 0,
+  MEDIUM: 1,
+  LOW: 2,
+};
+
+function getConflictSeverity(
+  item: { conflict_id?: string; conflict_title?: string; title?: string; severity?: string; reasoning?: string },
+  alignmentScore?: number,
+  index = 0
+): ConflictSeverity {
+  if (item.severity && ["HIGH", "MEDIUM", "LOW"].includes(String(item.severity).toUpperCase())) {
+    return String(item.severity).toUpperCase() as ConflictSeverity;
+  }
+  const text = `${item.conflict_title || item.title || ""} ${item.reasoning || ""}`.toLowerCase();
+  if (
+    index === 0 ||
+    (alignmentScore !== undefined && alignmentScore < 45) ||
+    text.includes("deadline") ||
+    text.includes("date") ||
+    text.includes("goal") ||
+    text.includes("critical") ||
+    text.includes("blocker")
+  ) {
+    return "HIGH";
+  }
+  if (text.includes("gap") || text.includes("unclear") || text.includes("missing") || index >= 2) {
+    return "LOW";
+  }
+  return "MEDIUM";
+}
+
+function SeverityBadge({
+  severity,
+  compact = false,
+}: {
+  severity: ConflictSeverity;
+  compact?: boolean;
+}) {
+  const sev = (severity || "MEDIUM").toUpperCase() as ConflictSeverity;
+  const label = sev === "HIGH" ? "High" : sev === "LOW" ? "Low" : "Medium";
+  return (
+    <span className={`severity-badge severity-${sev.toLowerCase()}`}>
+      <i className="severity-badge-dot" />
+      {compact ? label : `${label} Severity`}
+    </span>
+  );
+}
+
 const navItems: { name: Page; icon: IconName }[] = [
   { name: "Overview", icon: "grid" },
   { name: "Check-In", icon: "check" },
@@ -741,6 +790,51 @@ function Overview({
   const conflictsCount = report?.proposed_resolutions?.length ?? 0;
   const openQuestionsCount = report?.proposed_resolutions?.reduce((acc, p) => acc + p.unresolved_questions_for_team.length, 0) ?? 0;
 
+  const decidedResolutionIds = useMemo(
+    () => new Set(decisions.map((d) => d.resolution_id)),
+    [decisions]
+  );
+
+  const unresolvedConflicts = useMemo(() => {
+    if (!report?.proposed_resolutions) return [];
+    return report.proposed_resolutions
+      .filter((r) => !decidedResolutionIds.has(r.resolution_id))
+      .sort((a, b) => {
+        const sevA = getConflictSeverity(a, report?.alignment_score);
+        const sevB = getConflictSeverity(b, report?.alignment_score);
+        return severityRank[sevA] - severityRank[sevB];
+      });
+  }, [report, decidedResolutionIds]);
+
+  const resolvedConflicts = useMemo(() => {
+    if (!report?.proposed_resolutions) return [];
+    return report.proposed_resolutions.filter((r) =>
+      decidedResolutionIds.has(r.resolution_id)
+    );
+  }, [report, decidedResolutionIds]);
+
+  const highestPriorityConflict = unresolvedConflicts[0] || null;
+  const highestPrioritySeverity = highestPriorityConflict
+    ? getConflictSeverity(highestPriorityConflict, report?.alignment_score)
+    : null;
+
+  const handleReviewResolution = (resolutionId?: string) => {
+    setPage("Decisions");
+    if (resolutionId) {
+      setTimeout(() => {
+        const el = document.getElementById(`proposal-${resolutionId}`);
+        if (el) {
+          el.scrollIntoView({ behavior: "smooth", block: "center" });
+          el.style.transition = "outline 0.3s ease, box-shadow 0.3s ease";
+          el.style.outline = "2px solid var(--deep-lilac)";
+          setTimeout(() => {
+            el.style.outline = "none";
+          }, 2200);
+        }
+      }, 120);
+    }
+  };
+
   return (
     <div className="page">
       <PageIntro
@@ -752,7 +846,7 @@ function Overview({
             : `${project.title} is ready. Collect independent perspectives from teammates to detect alignment gaps.`
         }
         action={
-          <div style={{ display: "flex", gap: 10 }}>
+          <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
             <Button icon="arrow" onClick={() => setPage("Check-In")}>
               {responses.length > 0 ? "Submit check-in" : "Begin first check-in"}
             </Button>
@@ -762,6 +856,85 @@ function Overview({
           </div>
         }
       />
+
+      {/* What should we do next? Card */}
+      {highestPriorityConflict ? (
+        <section
+          className={`next-action-card severity-${highestPrioritySeverity?.toLowerCase() || "high"}`}
+        >
+          <div className="next-action-main">
+            <div className="next-action-eyebrow">
+              <span className="next-action-label">
+                <Icon name="spark" size={14} />
+                What should we do next?
+              </span>
+              {highestPrioritySeverity && (
+                <SeverityBadge severity={highestPrioritySeverity} />
+              )}
+            </div>
+            <h3 className="next-action-title">
+              {getCleanShortTitle(highestPriorityConflict.conflict_title, 55)}
+            </h3>
+            <p className="next-action-desc">
+              {getOneSentenceSummary(
+                highestPriorityConflict.recommended_solution,
+                140
+              )}
+            </p>
+            {highestPriorityConflict.impacted_members &&
+              highestPriorityConflict.impacted_members.length > 0 && (
+                <div className="next-action-meta">
+                  <div className="next-action-meta-faces">
+                    {highestPriorityConflict.impacted_members.map((name) => (
+                      <Avatar key={name} name={name} size="sm" />
+                    ))}
+                  </div>
+                  <span className="next-action-meta-text">
+                    Requires agreement from{" "}
+                    {highestPriorityConflict.impacted_members.join(", ")}
+                  </span>
+                </div>
+              )}
+          </div>
+          <div className="next-action-cta">
+            <Button
+              icon="arrow"
+              onClick={() => handleReviewResolution(highestPriorityConflict.resolution_id)}
+            >
+              Review resolution
+            </Button>
+          </div>
+        </section>
+      ) : (
+        <section className="next-action-card all-caught-up">
+          <div className="next-action-main">
+            <div className="next-action-eyebrow">
+              <span className="next-action-label">
+                <Icon name="check" size={14} />
+                What should we do next?
+              </span>
+            </div>
+            <h3 className="next-action-title">Your team is all caught up!</h3>
+            <p className="next-action-desc">
+              {decisions.length > 0
+                ? `All detected alignment tensions have confirmed resolutions (${decisions.length} confirmed decision${decisions.length === 1 ? "" : "s"}). Great job maintaining team alignment!`
+                : hasActivity && conflictsCount === 0
+                ? "No conflicts detected among team check-ins. Your team is in full alignment!"
+                : "No unresolved conflicts detected. Gather perspectives from teammates to discover alignment insights."}
+            </p>
+          </div>
+          <div className="next-action-cta">
+            <Button
+              variant="soft"
+              icon="arrow"
+              onClick={() => setPage(decisions.length > 0 ? "Team Memory" : hasActivity ? "Alignment" : "Check-In")}
+            >
+              {decisions.length > 0 ? "View Team Memory" : hasActivity ? "Review alignment" : "Begin check-in"}
+            </Button>
+          </div>
+        </section>
+      )}
+
       <div className="overview-grid">
         <section className="card score-card">
           <div className="card-heading">
@@ -854,39 +1027,99 @@ function Overview({
 
       {hasActivity ? (
         <div className="bottom-grid">
-          <section className="card">
+          <section className="card issues-card">
             <div className="card-heading">
               <span>Issues Needing Attention</span>
-              <button onClick={() => setPage("Alignment")}>View all</button>
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                {unresolvedConflicts.length > 0 && (
+                  <span className="unresolved-badge">
+                    {unresolvedConflicts.length} open
+                  </span>
+                )}
+                <button onClick={() => setPage("Alignment")}>View all</button>
+              </div>
             </div>
-            {report.proposed_resolutions && report.proposed_resolutions.length > 0 ? (
+            {unresolvedConflicts.length > 0 ? (
               <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-                {report.proposed_resolutions.slice(0, 3).map((res, idx) => (
-                  <div
-                    className="attention-card"
-                    key={res.resolution_id || idx}
-                    onClick={() => setPage("Alignment")}
-                    style={{ cursor: "pointer" }}
-                  >
-                    <span className="attention-line" />
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <small>Requires consensus · Issue #{idx + 1}</small>
-                      <strong>{getCleanShortTitle(res.conflict_title, 50)}</strong>
-                      <div className="statement-faces" style={{ marginTop: 4 }}>
-                        {res.impacted_members.map((name) => (
-                          <Avatar key={name} name={name} size="sm" />
-                        ))}
-                        <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                          {getOneSentenceSummary(res.recommended_solution, 110)}
-                        </span>
+                {unresolvedConflicts.slice(0, 3).map((res, idx) => {
+                  const sev = getConflictSeverity(res, report.alignment_score, idx);
+                  return (
+                    <div
+                      className="attention-card"
+                      key={res.resolution_id || idx}
+                      onClick={() => setPage("Alignment")}
+                      style={{ cursor: "pointer" }}
+                    >
+                      <span
+                        className="attention-line"
+                        style={{
+                          background:
+                            sev === "HIGH"
+                              ? "#e11d48"
+                              : sev === "MEDIUM"
+                              ? "#d97706"
+                              : "var(--deep-lilac)",
+                        }}
+                      />
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: 7, marginBottom: 2 }}>
+                          <SeverityBadge severity={sev} compact />
+                          <small style={{ margin: 0 }}>
+                            Requires consensus · Issue #{idx + 1}
+                          </small>
+                        </div>
+                        <strong>{getCleanShortTitle(res.conflict_title, 48)}</strong>
+                        <div className="statement-faces" style={{ marginTop: 4 }}>
+                          {res.impacted_members.map((name) => (
+                            <Avatar key={name} name={name} size="sm" />
+                          ))}
+                          <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                            {getOneSentenceSummary(res.recommended_solution, 110)}
+                          </span>
+                        </div>
                       </div>
+                      <Icon name="chevron" />
                     </div>
-                    <Icon name="chevron" />
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             ) : (
-              <p style={{ fontSize: 12, color: "var(--slate)" }}>No active conflicts found.</p>
+              <div className="empty-attention">
+                <span className="empty-check-icon">
+                  <Icon name="check" size={16} />
+                </span>
+                <p>No open issues! All detected conflicts have confirmed resolutions.</p>
+              </div>
+            )}
+
+            {/* Resolved section inside Issues Needing Attention */}
+            {resolvedConflicts.length > 0 && (
+              <div className="resolved-conflicts-section">
+                <div className="resolved-conflicts-heading">
+                  <span>Resolved Issues ({resolvedConflicts.length})</span>
+                  <button onClick={() => setPage("Team Memory")}>
+                    View in Team Memory <Icon name="arrow" size={11} />
+                  </button>
+                </div>
+                <div className="resolved-pills-list">
+                  {resolvedConflicts.slice(0, 3).map((res) => (
+                    <div
+                      key={res.resolution_id}
+                      className="resolved-pill"
+                      onClick={() => setPage("Team Memory")}
+                      title="View confirmed resolution in Team Memory"
+                    >
+                      <span className="resolved-check-dot">
+                        <Icon name="check" size={10} />
+                      </span>
+                      <span className="resolved-title">
+                        {getCleanShortTitle(res.conflict_title, 42)}
+                      </span>
+                      <small>Resolved</small>
+                    </div>
+                  ))}
+                </div>
+              </div>
             )}
           </section>
           <section className="card">
@@ -895,19 +1128,41 @@ function Overview({
               <button onClick={() => setPage("Team Memory")}>View all</button>
             </div>
             {decisions.length > 0 ? (
-              decisions.slice(0, 3).map((d) => (
-                <div className="decision-row" key={d.id}>
-                  <span>
-                    <Icon name="check" size={15} />
-                  </span>
-                  <div>
-                    <strong>{d.decision_text}</strong>
-                    <small>
-                      {d.status} by {d.decided_by} · {new Date(d.decided_at).toLocaleDateString()}
-                    </small>
+              <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+                {decisions.slice(0, 4).map((d) => (
+                  <div
+                    className="decision-row"
+                    key={d.id}
+                    onClick={() => setPage("Team Memory")}
+                    style={{ cursor: "pointer" }}
+                    title="Click to view full decision in Team Memory"
+                  >
+                    <span>
+                      <Icon name="check" size={14} />
+                    </span>
+                    <div>
+                      <strong className="decision-text-clamp" title={d.decision_text}>
+                        {getOneSentenceSummary(d.decision_text, 110)}
+                      </strong>
+                      <div className="decision-meta-row">
+                        <small>
+                          {d.status} by {d.decided_by} · {new Date(d.decided_at).toLocaleDateString()}
+                        </small>
+                        <button
+                          type="button"
+                          className="decision-view-link"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setPage("Team Memory");
+                          }}
+                        >
+                          View in Team Memory <Icon name="arrow" size={11} />
+                        </button>
+                      </div>
+                    </div>
                   </div>
-                </div>
-              ))
+                ))}
+              </div>
             ) : (
               <p style={{ fontSize: 12, color: "var(--slate)", marginTop: 10 }}>
                 No decisions finalized yet. Review proposals on the Decisions page.
@@ -1267,12 +1522,23 @@ function Alignment({
           cType = "PROCESS_MISALIGNMENT";
         }
 
+        let severity: ConflictSeverity = "MEDIUM";
+        if ((res as any).severity && ["HIGH", "MEDIUM", "LOW"].includes(String((res as any).severity).toUpperCase())) {
+          severity = String((res as any).severity).toUpperCase() as ConflictSeverity;
+        } else if (idx === 0 || report.alignment_score < 45 || cType === "DEADLINE_CONTRADICTION" || cType === "GOAL_INCOMPATIBILITY") {
+          severity = "HIGH";
+        } else if (cType === "INFORMATION_GAP" || idx >= 2) {
+          severity = "LOW";
+        } else {
+          severity = "MEDIUM";
+        }
+
         return {
           conflict_id: res.conflict_id || `CONF-${idx + 1}`,
           title: res.conflict_title,
           conflict_type: cType,
           category: "DIRECT_DISAGREEMENT" as ConflictCategory,
-          severity: (idx === 0 || report.alignment_score < 50 ? "HIGH" : "MEDIUM") as ConflictSeverity,
+          severity,
           severity_reasoning: res.reasoning,
           parties_involved: res.impacted_members || [],
           evidence,
@@ -1317,9 +1583,17 @@ function Alignment({
     };
   }, [analysisResult, report, responses, project?.title]);
 
-  const selectedConflict = conflicts.find((c) => c.conflict_id === selectedConflictId) || conflicts[0];
+  const sortedConflicts = useMemo(() => {
+    return [...conflicts].sort((a, b) => {
+      const rA = severityRank[a.severity] ?? 1;
+      const rB = severityRank[b.severity] ?? 1;
+      return rA - rB;
+    });
+  }, [conflicts]);
 
-  const visibleConflicts = filter === "Agreements" ? [] : conflicts;
+  const selectedConflict = sortedConflicts.find((c) => c.conflict_id === selectedConflictId) || sortedConflicts[0];
+
+  const visibleConflicts = filter === "Agreements" ? [] : sortedConflicts;
   const visibleAgreements = filter === "Conflicts" ? [] : compatibleDifferences;
 
   return (
@@ -1584,10 +1858,13 @@ function Alignment({
                         <Icon name="network" size={17} />
                       </span>
                       <span className="comparison-copy">
-                        <span className="finding-label conflict">
-                          {c.conflict_type.replace(/_/g, " ")} · {c.severity} SEVERITY
-                        </span>
-                        <strong>{getCleanShortTitle(c.title, 50)}</strong>
+                        <div style={{ display: "flex", alignItems: "center", gap: 7, flexWrap: "wrap", marginBottom: 3 }}>
+                          <SeverityBadge severity={c.severity} compact />
+                          <span className="finding-label conflict">
+                            {c.conflict_type.replace(/_/g, " ")}
+                          </span>
+                        </div>
+                        <strong>{getCleanShortTitle(c.title, 48)}</strong>
                         <small>{getOneSentenceSummary(c.impact_description || c.severity_reasoning || c.title, 140)}</small>
                       </span>
                       <span className="comparison-people">
@@ -1616,10 +1893,11 @@ function Alignment({
 
               {selectedConflict && (
                 <aside className="insight-panel">
-                  <span className="insight-type">
-                    {selectedConflict.severity} SEVERITY CONFLICT
-                  </span>
-                  <h2>{getCleanShortTitle(selectedConflict.title, 50)}</h2>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
+                    <SeverityBadge severity={selectedConflict.severity} />
+                    <span className="section-label" style={{ margin: 0 }}>CONFLICT</span>
+                  </div>
+                  <h2>{getCleanShortTitle(selectedConflict.title, 48)}</h2>
                   <p style={{ fontSize: 13, color: "var(--ink)", margin: "8px 0", lineHeight: 1.5 }}>
                     {getOneSentenceSummary(selectedConflict.impact_description || selectedConflict.severity_reasoning, 140)}
                   </p>
@@ -1627,7 +1905,7 @@ function Alignment({
                     <span>
                       <i
                         style={{
-                          width: selectedConflict.severity === "HIGH" ? "95%" : "70%",
+                          width: selectedConflict.severity === "HIGH" ? "95%" : selectedConflict.severity === "MEDIUM" ? "70%" : "45%",
                         }}
                       />
                     </span>
@@ -1792,13 +2070,16 @@ function Decisions({
             const isExpanded = !!expandedReasoning[p.resolution_id];
 
             return (
-              <article className="proposal-card" key={p.resolution_id}>
+              <article className="proposal-card" key={p.resolution_id} id={`proposal-${p.resolution_id}`}>
                 <div className="proposal-rank">0{i + 1}</div>
                 <div className="proposal-main">
                   <div className="proposal-title">
-                    <span className="eyebrow">
-                      {p.resolution_id} · Addressing {getCleanShortTitle(p.conflict_title, 50)}
-                    </span>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
+                      <SeverityBadge severity={getConflictSeverity(p, report?.alignment_score, i)} compact />
+                      <span className="eyebrow" style={{ margin: 0 }}>
+                        {p.resolution_id} · Addressing {getCleanShortTitle(p.conflict_title, 48)}
+                      </span>
+                    </div>
                     <h2>{getShortRecommendation(p.recommended_solution, 2)}</h2>
                   </div>
 
