@@ -17,10 +17,10 @@ export const isMockMode = rawMode === "mock" || Boolean(rawBaseUrl && rawBaseUrl
 
 // Configurable HTTPS or localhost base URL:
 // 1. Explicit VITE_API_BASE_URL (supports deployment HTTPS URLs)
-// 2. Fallback based on mode (Beeceptor for mock mode, localhost:8000 for live mode)
+// 2. Fallback based on mode (Beeceptor for mock mode, relative origin "" for live mode)
 export const API_BASE_URL = rawBaseUrl && rawBaseUrl !== ""
   ? rawBaseUrl.replace(/\/$/, "")
-  : (isMockMode ? "https://mediator.free.beeceptor.com" : "http://localhost:8000");
+  : (isMockMode ? "https://mediator.free.beeceptor.com" : "");
 
 export class ApiError extends Error {
   constructor(

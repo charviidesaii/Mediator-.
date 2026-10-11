@@ -138,11 +138,20 @@ if os.path.exists(_frontend_assets):
     app.mount("/assets", StaticFiles(directory=_frontend_assets), name="assets")
 
 
+@app.get("/favicon.svg", include_in_schema=False)
+async def favicon():
+    icon_path = os.path.join(_frontend_dist, "favicon.svg")
+    if os.path.exists(icon_path):
+        return FileResponse(icon_path, media_type="image/svg+xml")
+    return Response(status_code=204)
+
+
 @app.get("/", tags=["UI / Health"])
 async def root(request: Request):
     """Serves the Mediator web dashboard for browsers, or API metadata for JSON clients."""
     accept = request.headers.get("accept", "")
-    if "text/html" in accept:
+    has_ui_params = "project_id" in request.query_params or "tab" in request.query_params
+    if "text/html" in accept or has_ui_params:
         return await serve_dashboard()
     return {
         "name": settings.project_name,

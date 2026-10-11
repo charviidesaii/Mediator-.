@@ -1,4 +1,12 @@
-import { FormEvent, ReactNode, useEffect, useMemo, useState } from "react";
+import React, {
+  Component,
+  ErrorInfo,
+  FormEvent,
+  ReactNode,
+  useEffect,
+  useMemo,
+  useState,
+} from "react";
 import { apiClient, ApiError } from "./api/client";
 import type {
   AlignmentWorkflowResult,
@@ -404,7 +412,9 @@ function groupProposalsIntoIssues(
     // Match evidence quotes from member check-in responses
     const evidenceList: Array<{ member: string; quote: string }> = [];
     for (const member of impactedMembers) {
-      const memberResp = responses.find((r) => r.member_name.toLowerCase() === member.toLowerCase());
+      const memberResp = responses.find(
+        (r) => r?.member_name && r.member_name.toLowerCase() === member.toLowerCase()
+      );
       if (memberResp) {
         evidenceList.push({
           member: memberResp.member_name,
@@ -984,21 +994,9 @@ function Overview({
   onSeedDemo: () => void;
   isSeeding: boolean;
 }) {
-  if (!project) {
-    return (
-      <div className="page">
-        <PageIntro
-          eyebrow="Workspace"
-          title="No Project Selected"
-          text="Create a project to start gathering team perspectives."
-        />
-      </div>
-    );
-  }
-
   const hasActivity = report !== null;
   const score = report ? Math.round(report.alignment_score) : null;
-  const submittedMemberNames = new Set(responses.map((r) => r.member_name.toLowerCase()));
+  const submittedMemberNames = new Set(responses.map((r) => (r?.member_name ? r.member_name.toLowerCase() : "")));
   const conflictsCount = report?.proposed_resolutions?.length ?? 0;
   const openQuestionsCount = report?.proposed_resolutions?.reduce((acc, p) => acc + p.unresolved_questions_for_team.length, 0) ?? 0;
 
@@ -1029,6 +1027,18 @@ function Overview({
   const highestPrioritySeverity = highestPriorityConflict
     ? getConflictSeverity(highestPriorityConflict, report?.alignment_score)
     : null;
+
+  if (!project) {
+    return (
+      <div className="page">
+        <PageIntro
+          eyebrow="Workspace"
+          title="No Project Selected"
+          text="Create a project to start gathering team perspectives."
+        />
+      </div>
+    );
+  }
 
   const handleReviewResolution = (resolutionId?: string) => {
     setPage("Decisions");
@@ -1674,8 +1684,6 @@ function Alignment({
   const [selectedConflictId, setSelectedConflictId] = useState<string | null>(null);
   const [showDetails, setShowDetails] = useState(false);
 
-  if (!project) return <div className="page"><p>Please select a project first.</p></div>;
-
   const { conflicts, compatibleDifferences, perspectives, hasAnalysis, score, executionMode } = useMemo(() => {
     if (analysisResult) {
       return {
@@ -1810,6 +1818,8 @@ function Alignment({
 
   const visibleConflicts = filter === "Agreements" ? [] : sortedConflicts;
   const visibleAgreements = filter === "Conflicts" ? [] : compatibleDifferences;
+
+  if (!project) return <div className="page"><p>Please select a project first.</p></div>;
 
   return (
     <div className="page alignment-page">
@@ -2227,8 +2237,6 @@ function Decisions({
   const [error, setError] = useState<string | null>(null);
   const [expandedIssues, setExpandedIssues] = useState<Record<string, boolean>>({});
 
-  if (!project) return <div className="page"><p>Please select a project first.</p></div>;
-
   const proposals = report?.proposed_resolutions || [];
 
   // Group proposals into distinct issues, filtering out self-conflicts
@@ -2238,6 +2246,8 @@ function Decisions({
 
   const pendingIssues = useMemo(() => distinctIssues.filter((iss) => !iss.isResolved), [distinctIssues]);
   const approvedDecisions = decisions;
+
+  if (!project) return <div className="page"><p>Please select a project first.</p></div>;
 
   const handleAction = async (resolutionId: string, action: "APPROVE" | "REJECT" | "MODIFY", custom?: string) => {
     setError(null);
@@ -2647,13 +2657,13 @@ function TeamMemory({
   const [query, setQuery] = useState("");
   const [expandedHistory, setExpandedHistory] = useState<Record<string, boolean>>({});
 
-  if (!project) return <div className="page"><p>Please select a project first.</p></div>;
-
   const filtered = useMemo(() => {
     return decisions.filter((d) =>
       `${d.decision_text} ${d.decided_by} ${d.status}`.toLowerCase().includes(query.toLowerCase()),
     );
   }, [decisions, query]);
+
+  if (!project) return <div className="page"><p>Please select a project first.</p></div>;
 
   return (
     <div className="page">
@@ -2764,6 +2774,42 @@ function TeamMemory({
       )}
     </div>
   );
+}
+
+class ErrorBoundary extends Component<
+  { children: ReactNode },
+  { hasError: boolean; error: Error | null }
+> {
+  constructor(props: { children: ReactNode }) {
+    super(props);
+    this.state = { hasError: false, error: null };
+  }
+  static getDerivedStateFromError(error: Error) {
+    return { hasError: true, error };
+  }
+  componentDidCatch(error: Error, errorInfo: ErrorInfo) {
+    console.error("ErrorBoundary caught an error:", error, errorInfo);
+  }
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div className="page" style={{ padding: "40px 24px", textAlign: "center" }}>
+          <h2>Something went wrong displaying this view.</h2>
+          <p style={{ color: "#ef4444", margin: "12px 0" }}>{this.state.error?.message}</p>
+          <button
+            className="button button-primary"
+            onClick={() => {
+              this.setState({ hasError: false, error: null });
+              window.location.reload();
+            }}
+          >
+            Reload Dashboard
+          </button>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
 }
 
 export default function App() {
@@ -3115,56 +3161,58 @@ export default function App() {
           </div>
         )}
         <main>
-          {page === "Overview" && (
-            <Overview
-              project={currentProject}
-              responses={responses}
-              report={report}
-              decisions={decisions}
-              setPage={navigate}
-              onManageTeam={() => setSetupMode("members")}
-              onSeedDemo={handleSeedDemoScenario}
-              isSeeding={isSeeding}
-            />
-          )}
-          {page === "Check-In" && (
-            <CheckIn
-              key={currentProject?.id}
-              project={currentProject}
-              responses={responses}
-              onComplete={() => navigate("Alignment")}
-              onSubmitResponse={handleSubmitResponse}
-            />
-          )}
-          {page === "Alignment" && (
-            <Alignment
-              project={currentProject}
-              analysisResult={analysisResult}
-              report={report}
-              responses={responses}
-              onRunAnalysis={handleRunAnalysis}
-              analyzing={analyzing}
-              error={analysisError}
-              onStartCheckIn={() => navigate("Check-In")}
-              setPage={navigate}
-            />
-          )}
-          {page === "Decisions" && (
-            <Decisions
-              project={currentProject}
-              report={report}
-              decisions={decisions}
-              responses={responses}
-              onRecordDecision={handleRecordDecision}
-              recording={recording}
-              activeUser={activeUser}
-              setActiveUser={setActiveUser}
-              setPage={navigate}
-            />
-          )}
-          {page === "Team Memory" && (
-            <TeamMemory project={currentProject} decisions={decisions} />
-          )}
+          <ErrorBoundary>
+            {page === "Overview" && (
+              <Overview
+                project={currentProject}
+                responses={responses}
+                report={report}
+                decisions={decisions}
+                setPage={navigate}
+                onManageTeam={() => setSetupMode("members")}
+                onSeedDemo={handleSeedDemoScenario}
+                isSeeding={isSeeding}
+              />
+            )}
+            {page === "Check-In" && (
+              <CheckIn
+                key={currentProject?.id}
+                project={currentProject}
+                responses={responses}
+                onComplete={() => navigate("Alignment")}
+                onSubmitResponse={handleSubmitResponse}
+              />
+            )}
+            {page === "Alignment" && (
+              <Alignment
+                project={currentProject}
+                analysisResult={analysisResult}
+                report={report}
+                responses={responses}
+                onRunAnalysis={handleRunAnalysis}
+                analyzing={analyzing}
+                error={analysisError}
+                onStartCheckIn={() => navigate("Check-In")}
+                setPage={navigate}
+              />
+            )}
+            {page === "Decisions" && (
+              <Decisions
+                project={currentProject}
+                report={report}
+                decisions={decisions}
+                responses={responses}
+                onRecordDecision={handleRecordDecision}
+                recording={recording}
+                activeUser={activeUser}
+                setActiveUser={setActiveUser}
+                setPage={navigate}
+              />
+            )}
+            {page === "Team Memory" && (
+              <TeamMemory project={currentProject} decisions={decisions} />
+            )}
+          </ErrorBoundary>
         </main>
       </div>
       {setupMode && (

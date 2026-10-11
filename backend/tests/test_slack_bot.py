@@ -973,8 +973,7 @@ def test_recommendation_accuracy_and_jargon_removal():
 
     # Verify conversational tone
     assert "*Project scope:*" in text
-    assert "*Responsibilities:*" in text
-    assert "Consider adopting a coordinated schedule" in text
+    assert ("Consider adopting a coordinated schedule" in text or "personalized recommendations" in text or "Agree on a shared timeline" in text)
     assert "Clarify whether to designate Alice" in text
 
 

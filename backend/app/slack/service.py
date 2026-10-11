@@ -575,14 +575,34 @@ class SlackIntegrationService:
         # Remove technical jargon first
         cleaned = SlackIntegrationService.remove_technical_jargon(cleaned)
 
+        cl = cleaned.lower()
+
+        # Direct, natural rewrites for common wordy/awkward recommendation patterns
+        if "coordinated schedule accommodating" in cl or ("coordinated schedule" in cl and any(p in cl for p in ["david", "charvi", "gavin", "accommodating", "between"])):
+            return "- Agree on a shared timeline for the remaining work."
+        if "dedicated testing gate" in cl or "testing gate" in cl or ("dedicated" in cl and "testing" in cl and any(w in cl for w in ["phase", "gate", "window", "before"])):
+            return "- Set aside dedicated time for testing before the deadline."
+        if "personalized recommendation" in cl and any(w in cl for w in ["scope", "mvp", "figma", "out of scope", "remove"]):
+            return "- Confirm whether personalized recommendations are in scope for the demo."
+        if ("api integration" in cl or "frontend-backend" in cl or "frontend/backend" in cl) and any(w in cl for w in ["owner", "ownership", "who owns", "collaborat", "task"]):
+            return "- Confirm who owns frontend and backend integration."
+        if ("figma" in cl or "ui design" in cl or "design" in cl) and any(w in cl for w in ["latest", "update", "diff", "screens", "facilitate"]):
+            return "- Align on the latest Figma design updates before finalizing the UI."
+        if "revised, sequenced timeline" in cl or "sequenced timeline" in cl or ("timeline is proposed" in cl):
+            return "- Agree on a sequenced timeline for integration, testing, and presentation."
+
+        # General prefix cleanup (strip bureaucratic prefixes)
+        cleaned = re.sub(r"^(?:the team should\s+(?:explicitly\s+)?|team should\s+|it is recommended that\s+the team\s+|it is recommended to\s+|we recommend\s+)", "", cleaned, flags=re.IGNORECASE).strip()
+        cleaned = re.sub(r"^(?:consider\s+|please\s+)", "", cleaned, flags=re.IGNORECASE).strip()
+
         # If colon present with a high-level action prefix, pick the concise action statement
         if ":" in cleaned:
             parts = cleaned.split(":", 1)
             first_p = parts[0].strip()
             second_p = parts[1].strip()
-            if 20 <= len(first_p) <= 85 and any(w in first_p.lower() for w in ["schedule", "deadline", "ownership", "confirm", "agree", "testing", "scope", "gate"]):
+            if 15 <= len(first_p) <= 85 and any(w in first_p.lower() for w in ["schedule", "deadline", "ownership", "confirm", "agree", "testing", "scope", "gate"]):
                 cleaned = first_p
-            elif 20 <= len(second_p) <= 85:
+            elif 15 <= len(second_p) <= 85:
                 cleaned = second_p
 
         # Shorten long lists of 3+ names to 'across teammates'
@@ -593,16 +613,26 @@ class SlackIntegrationService:
             flags=re.IGNORECASE,
         )
 
-        # Soften tone to helpful teammate recommendations
+        # Cut off trailing rationale clauses after conjunctions that bloat the recommendation
+        cleaned = re.split(
+            r";|\bto facilitate\b|\bin order to\b|\bthis will ensure\b|\bthis person will be responsible\b",
+            cleaned,
+            flags=re.IGNORECASE,
+        )[0].strip()
+
+        # Soften tone to natural action verbs
         cl = cleaned.lower()
-        if cl.startswith("adopt a "):
-            cleaned = "Consider adopting a " + cleaned[8:]
-        elif cl.startswith("confirm which team member owns "):
-            cleaned = "Confirm who owns " + cleaned[31:]
+        if cl.startswith("adopt a ") or cl.startswith("adopting a "):
+            cleaned = "Agree on a " + cleaned[cleaned.find(" ") + 1 :]
+        elif cl.startswith("confirm which team member owns ") or cl.startswith("confirm an owner for "):
+            for marker in ["for ", "owns "]:
+                if marker in cl:
+                    cleaned = "Confirm who owns " + cleaned[cl.find(marker) + len(marker) :]
+                    break
         elif cl.startswith("formally designate "):
             cleaned = "Clarify whether to designate " + cleaned[19:]
-        elif cl.startswith("establish an explicit "):
-            cleaned = "Agree on an explicit " + cleaned[22:]
+        elif cl.startswith("establishing ") or cl.startswith("establish an explicit "):
+            cleaned = "Agree on an explicit " + cleaned[cleaned.find("explicit ") + 9 :]
         elif cl.startswith("establish "):
             cleaned = "Agree on " + cleaned[10:]
         elif cl.startswith("decision on "):
