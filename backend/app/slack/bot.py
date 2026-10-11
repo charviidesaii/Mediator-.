@@ -177,6 +177,11 @@ def create_slack_app() -> Optional[App]:
             asyncio.set_event_loop(new_loop)
             new_loop.run_until_complete(_process_analysis())
 
+    @app.action("open_dashboard_button")
+    def handle_open_dashboard_action(ack, body):
+        """Acknowledges clicks on the Open Dashboard button to prevent unhandled action warnings."""
+        ack()
+
     return app
 
 
