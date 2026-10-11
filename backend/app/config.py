@@ -61,7 +61,7 @@ class Settings(BaseSettings):
     n8n_webhook_secret: Optional[str] = Field(default=None, alias="N8N_WEBHOOK_SECRET")
 
     model_config = SettingsConfigDict(
-        env_file=".env",
+        env_file=(".env", "../.env"),
         env_file_encoding="utf-8",
         extra="ignore",
     )
@@ -99,4 +99,8 @@ class Settings(BaseSettings):
 
 
 settings = Settings()
+
+# Sync active Gemini API key to os.environ for Google ADK Runner internal clients
+if settings.active_api_key and not os.environ.get("GEMINI_API_KEY"):
+    os.environ["GEMINI_API_KEY"] = settings.active_api_key
 
